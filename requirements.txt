@@ -8,3 +8,5 @@ opencv-python-headless==4.14.0.94
 open-image-models[onnx]==0.6.0
 dill>=0.3.8,<0.5
 psutil>=5.8,<8
+
+easyocr==1.7.2

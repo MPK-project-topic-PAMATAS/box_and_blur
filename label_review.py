@@ -33,6 +33,7 @@ from label_review_prediction_cache import CACHE_FOLDER, PredictionCache
 ROOT = Path(__file__).resolve().parent
 UI = ROOT / 'label_review_ui'
 STATE = ROOT / '.label_review'
+PREFERENCES = STATE / 'preferences.json'
 EXT = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
 SKIP = {'source_metadata', 'node_modules', '__pycache__', 'backups', 'cross_folder_audit_history', CACHE_FOLDER}
 
@@ -332,11 +333,20 @@ class Dataset:
             image = im.convert('RGB')
         for region in regions:
             x,y,w,h = self.checked_box(region['bbox'], *image.size)
+            method = region.get('method', 'gaussian')
+            if method not in ('gaussian', 'pixelate'):
+                raise ValueError('Choose Gaussian blur or pixelation.')
             radius = float(region.get('radius', 18))
             if not math.isfinite(radius) or not 1 <= radius <= 150:
                 raise ValueError('Blur strength must be between 1 and 150.')
             rect = (int(x), int(y), min(image.width, math.ceil(x+w)), min(image.height, math.ceil(y+h)))
-            crop = image.crop(rect).filter(ImageFilter.GaussianBlur(radius))
+            crop = image.crop(rect)
+            if method == 'pixelate':
+                grid = (max(1, math.ceil(crop.width / radius)),
+                        max(1, math.ceil(crop.height / radius)))
+                crop = crop.resize(grid, Image.Resampling.BOX).resize(crop.size, Image.Resampling.NEAREST)
+            else:
+                crop = crop.filter(ImageFilter.GaussianBlur(radius))
             image.paste(crop, rect)
         return image
 
@@ -658,6 +668,12 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         p = Path(folder).resolve()
                         self.send({'path': str(p), 'parent': str(p.parent) if p != p.parent else '', 'folders': sorted(str(c) for c in p.iterdir() if c.is_dir() and not c.name.startswith('.'))})
+                elif parsed.path == '/api/preferences':
+                    try:
+                        preferences = json.loads(PREFERENCES.read_text(encoding='utf-8'))
+                    except (FileNotFoundError, ValueError):
+                        preferences = {}
+                    self.send(preferences if isinstance(preferences, dict) else {})
                 elif parsed.path == '/api/state':
                     self.send(APP.dataset.summary() if APP.dataset else {'folder': None, 'suggested': [str(Path.home()), str(Path.cwd())]})
                 elif parsed.path == '/api/image':
@@ -699,12 +715,29 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('Open a dataset first.')
                     if payload.get('folder', str(dataset.root)) != str(dataset.root):
                         raise ValueError('The open dataset has changed.')
-                    entry = dataset.by_id[payload['id']]
-                    if payload.get('background') is not True and dataset.revision(entry) != payload.get('revision'):
-                        raise ValueError('Reload the image before generating suggestions.')
+                    cache_ids = payload.get('cache_ids')
+                    if cache_ids is not None:
+                        if not isinstance(cache_ids, list) or len(cache_ids) > 200:
+                            raise ValueError('Request at most 200 cached predictions at a time.')
+                        entries = [(image_id, dataset.by_id[image_id]) for image_id in cache_ids]
+                    else:
+                        entry = dataset.by_id[payload['id']]
+                        if payload.get('background') is not True and dataset.revision(entry) != payload.get('revision'):
+                            raise ValueError('Reload the image before generating suggestions.')
                 road = self.path == '/api/preannotate'
+                kind = 'road' if road else 'privacy'
                 detector = APP.preannotator if road else APP.privacy_detector
-                self.send(APP.prediction_cache.run(dataset, entry, 'road' if road else 'privacy',
+                if cache_ids is not None:
+                    hits = {}
+                    for image_id, cached_entry in entries:
+                        result = APP.prediction_cache.run(
+                            dataset, cached_entry, kind, {**payload, 'cache_only': True},
+                            detector, atomic, inside)
+                        if result is not None:
+                            hits[image_id] = result
+                    self.send(hits)
+                    return
+                self.send(APP.prediction_cache.run(dataset, entry, kind,
                                                    payload, detector, atomic, inside))
                 return
             with APP.lock:
@@ -712,6 +745,11 @@ class Handler(BaseHTTPRequestHandler):
                     dataset = Dataset(payload['folder'], payload.get('mode', 'auto'))
                     APP.dataset = dataset
                     self.send(dataset.summary())
+                elif self.path == '/api/preferences':
+                    if not isinstance(payload, dict) or size > 65536:
+                        raise ValueError('Invalid review preferences.')
+                    atomic(PREFERENCES, dump(payload))
+                    self.send({'saved': True})
                 elif self.path == '/api/classes':
                     self.send(APP.dataset.manage_class(payload))
                 elif self.path == '/api/statistics':

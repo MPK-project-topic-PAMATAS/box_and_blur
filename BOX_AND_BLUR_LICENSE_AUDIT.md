@@ -99,3 +99,8 @@ container bundling those wheels needs an artifact-specific notice review.
 | ultralytics | 8.3.253 | AGPL-3.0 |
 | ultralytics-thop | 2.2.4 | AGPL-3.0 |
 | urllib3 | 2.8.0 | MIT |
+
+EasyOCR 1.7.2 adds local plate recognition and is published under Apache-2.0.
+The recognizer downloads upstream model files as needed. Those files stay in
+the local EasyOCR cache and are excluded from the source release.
+[EasyOCR license](https://github.com/JaidedAI/EasyOCR/blob/v1.7.2/LICENSE)

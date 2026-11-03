@@ -57,12 +57,103 @@ def merge_regions(detections, width, height, thresholds):
     return regions
 
 
+def has_mosaic_grid(pixels, bbox):
+    """Look for repeated, aligned mosaic boundaries in both directions."""
+    import numpy as np
+
+    x, y, width, height = bbox
+    # The proposal includes padding. Exclude its border from the test.
+    dx, dy = round(width*.12), round(height*.12)
+    crop = pixels[y+dy:y+height-dy, x+dx:x+width-dx]
+    if min(crop.shape[:2]) < 15:
+        return False
+    crop = crop.astype(np.float32)
+    for axis in (0, 1):
+        edges = np.abs(np.diff(crop, axis=axis)).mean(axis=2)
+        strength = np.moveaxis(edges, axis, 0).mean(axis=1)
+        if strength.mean() < .7:
+            return False
+        found = False
+        for period in range(3, min(32, len(strength)//3)+1):
+            phases = np.arange(len(strength)) % period
+            for phase in range(period):
+                on_grid = phases == phase
+                peak = strength[on_grid]
+                other = strength[~on_grid]
+                if (peak.mean() >= max(3, 2.8*other.mean())
+                        and (peak >= max(2, 1.8*other.mean())).sum() >= 3
+                        and peak.sum() >= .46*strength.sum()):
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            return False
+    return True
+
+
+def plate_looks_pixelated(pixels, bbox):
+    if has_mosaic_grid(pixels, bbox):
+        return True
+    x, y, width, height = bbox
+    # Some anonymizers mosaic only the text, leaving the plate surround intact.
+    for fraction in (.5, .28):
+        w, h = round(width*fraction), round(height*.52)
+        if min(w, h) < 19:
+            continue
+        for left in (.15, .30, .45):
+            for top in (0, .15, .30):
+                if has_mosaic_grid(pixels, (x+round(width*left), y+round(height*top), w, h)):
+                    return True
+    return False
+
+
+class PlateTextReader:
+    """Recognize plate text locally and return only a readability flag."""
+    profiles = (('en',), ('ru', 'en'), ('ch_sim', 'en'), ('ja', 'en'), ('ko', 'en'))
+
+    def __init__(self):
+        self.readers = {}
+
+    def readable(self, pixels, bbox):
+        import cv2
+        import easyocr
+
+        x, y, width, height = bbox
+        crop = pixels[y:y+height, x:x+width]
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        if height < 48:
+            gray = cv2.resize(gray, (max(1, round(width*48/height)), 48),
+                              interpolation=cv2.INTER_CUBIC)
+        for profile in self.profiles:
+            if profile not in self.readers:
+                self.readers[profile] = easyocr.Reader(list(profile), gpu=False,
+                                                       detector=False, verbose=False)
+            for _, text, confidence in self.readers[profile].recognize(gray, detail=1, workers=0):
+                count = sum(character.isalnum() for character in text)
+                if (count >= 2 and confidence >= .45) or (count == 1 and confidence >= .85):
+                    return True
+        return False
+
+
+def supported_by(bbox, boxes):
+    x, y, w, h = bbox
+    return any(
+        max(0, min(x+w, right)-max(x, left)) *
+        max(0, min(y+h, bottom)-max(y, top)) >= .5*w*h
+        for left, top, right, bottom in boxes
+    )
+
+
 class PrivacyDetector:
     def __init__(self):
         self.dashcam = None
         self.face = None
         self.plate = {}
         self.face_ssd = None
+        self.plate_text_reader = PlateTextReader()
+        self.context_models = {}
+        self.profile = None
 
     def dashcam_detections(self, image, threshold):
         configure_local_ultralytics()
@@ -82,18 +173,22 @@ class PrivacyDetector:
             if kind:
                 yield kind, (x1,y1,x2,y2), score, 'Dashcam YOLOv8'
 
-    def face_detections(self, bgr, threshold):
+    def face_landmarks(self, pixels, threshold):
         import cv2
         if self.face is None:
             self.face = cv2.FaceDetectorYN.create(str(MODELS / 'yunet.onnx'), '', (320,320), .5, .3, 1000)
+        self.face.setInputSize((pixels.shape[1], pixels.shape[0]))
+        self.face.setScoreThreshold(threshold)
+        _, faces = self.face.detect(pixels)
+        return faces if faces is not None else ()
+
+    def face_detections(self, bgr, threshold):
+        import cv2
         height, width = bgr.shape[:2]
         scale = min(1, 1280 / max(width, height))
         resized = cv2.resize(bgr, (max(1, round(width*scale)), max(1, round(height*scale)))) if scale < 1 else bgr
         rh, rw = resized.shape[:2]
-        self.face.setInputSize((rw, rh))
-        self.face.setScoreThreshold(threshold)
-        _, faces = self.face.detect(resized)
-        for row in faces if faces is not None else ():
+        for row in self.face_landmarks(resized, threshold):
             x,y,w,h = map(float, row[:4])
             yield 'face', (x*width/rw,y*height/rh,(x+w)*width/rw,(y+h)*height/rh), float(row[-1]), 'YuNet'
 
@@ -135,6 +230,52 @@ class PrivacyDetector:
             box = result.bounding_box
             yield 'plate', (box.x1,box.y1,box.x2,box.y2), float(result.confidence), name
 
+    def face_features(self, bgr, bbox):
+        import cv2
+        x, y, w, h = bbox
+        if min(w, h) < 8:
+            return False
+        scale = min(320 / max(w, h), max(1, 128 / min(w, h)))
+        crop = cv2.resize(bgr[y:y+h, x:x+w], (max(1, round(w*scale)), max(1, round(h*scale))))
+        height, width = crop.shape[:2]
+
+        def fits(x, y, w, h):
+            return (w*h >= .08*width*height and
+                    .2*width <= x+w/2 <= .8*width and .2*height <= y+h/2 <= .8*height)
+
+        for pixels in (crop, cv2.flip(crop, 1)):
+            for row in self.face_landmarks(pixels, .6):
+                left, top, fw, fh = row[:4]
+                landmarks = row[4:14].reshape(5, 2)
+                points = {(float(px), float(py)) for px, py in landmarks
+                          if left <= px <= left+fw and top <= py <= top+fh}
+                if fits(left, top, fw, fh) and len(points) >= 3:
+                    return True
+            if self.profile is None:
+                self.profile = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+            if self.profile.empty():
+                raise RuntimeError('OpenCV profile cascade is missing.')
+            gray = cv2.cvtColor(pixels, cv2.COLOR_BGR2GRAY)
+            profiles = self.profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
+            if any(fits(*box) for box in profiles):
+                return True
+        return False
+
+    def context_boxes(self, image, filename, classes):
+        configure_local_ultralytics()
+        import torch
+        from ultralytics import YOLO
+        if filename not in self.context_models:
+            path = MODELS / filename
+            if not path.is_file():
+                raise FileNotFoundError(f'{filename} is missing.')
+            self.context_models[filename] = YOLO(str(path), task='detect')
+        result = self.context_models[filename].predict(
+            image, imgsz=960, conf=.20, classes=classes,
+            device=0 if torch.cuda.is_available() else 'cpu', max_det=100, verbose=False)[0]
+        return [(int(class_id), (x1, y1, x2, y2))
+                for x1, y1, x2, y2, _, class_id in result.boxes.data.cpu().tolist()]
+
     def predict(self, dataset, payload):
         import numpy as np
         requested = payload.get('thresholds', {})
@@ -164,6 +305,47 @@ class PrivacyDetector:
                 completed.append(name)
             except Exception as error:
                 warnings.append(f'{name}: {error}')
-        return {'regions': merge_regions(detections, *image.size, thresholds),
+        regions = merge_regions(detections, *image.size, thresholds)
+        has_faces = any(region['kind'] == 'face' for region in regions)
+        has_plates = any(region['kind'] == 'plate' for region in regions)
+        people = vehicles = heads = None
+        if regions:
+            classes = ([0] if has_faces else []) + ([2, 3, 5, 7] if has_plates else [])
+            try:
+                context = self.context_boxes(image, 'context.pt', classes)
+                people = [box for class_id, box in context if class_id == 0]
+                vehicles = [box for class_id, box in context if class_id != 0]
+            except Exception as error:
+                warnings.append(f'Person/vehicle context unavailable: {error}')
+        if has_faces:
+            try:
+                heads = [box for _, box in self.context_boxes(image, 'heads.pt', [0])]
+            except Exception as error:
+                warnings.append(f'Head context unavailable: {error}')
+        ocr_available = feature_check_available = True
+        for region in regions:
+            if region['kind'] == 'face':
+                if people is not None and heads is not None:
+                    region['human_context'] = supported_by(region['bbox'], people + heads)
+                if feature_check_available:
+                    try:
+                        region['face_features'] = self.face_features(bgr, region['bbox'])
+                    except Exception as error:
+                        warnings.append(f'Face crop verification unavailable: {error}')
+                        feature_check_available = False
+                continue
+            if vehicles is not None:
+                region['vehicle_context'] = supported_by(region['bbox'], vehicles)
+                if not region['vehicle_context']:
+                    region['confidence'] *= .65
+                    region['weak'] = True
+            region['already_pixelated'] = plate_looks_pixelated(bgr, region['bbox'])
+            if ocr_available:
+                try:
+                    region['plate_text_readable'] = self.plate_text_reader.readable(bgr, region['bbox'])
+                except Exception as error:
+                    warnings.append(f'Plate OCR unavailable: {error}')
+                    ocr_available = False
+        return {'regions': sorted(regions, key=lambda region: -region['confidence']),
                 'detectors': completed,
                 'warnings': warnings, 'seconds': round(perf_counter()-started, 2)}

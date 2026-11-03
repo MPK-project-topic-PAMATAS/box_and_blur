@@ -18,18 +18,25 @@ function remember(before = snapshot()) {
 function changed(){dirty=blurs.length>0 || JSON.stringify(boxes)!==JSON.stringify(current.boxes);if(originalPicture)picture=originalPicture;previewSerial++;if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null;}updateSave();inspector();draw();}
 function updateSave(){const el=$('saveState');el.textContent=dirty?'Unsaved changes':current?.history?'Reviewed':'Ready to review';el.className='pill '+(dirty?'unsaved':current?.history?'saved':'');$('save').disabled=$('saveNext').disabled=!editable();$('discardChanges').disabled=!editable()||!dirty;$('undo').disabled=!editable()||!undo.length;$('redo').disabled=!editable()||!redo.length;}
 function restoreStack(from,to){if(!editable()||!from.length)return;to.push(snapshot());const state=JSON.parse(from.pop());boxes=state.boxes;blurs=state.blurs;selected=null;selectedBlur=null;changed();}
-function setTool(t){hoverHandle=-1;tool=t;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));canvas.style.cursor=t==='pan'?'grab':t==='select'?'default':'crosshair';}
+function updatePrivacyEffectVisibility() {
+  $('privacyEffectControls').hidden = tool !== 'blur' && !blurs[selectedBlur];
+}
+function setTool(t){hoverHandle=-1;tool=t;updatePrivacyEffectVisibility();document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));canvas.style.cursor=t==='pan'?'grab':t==='select'?'default':'crosshair';}
 function makeButton(text,fn,cls=''){const b=document.createElement('button');b.textContent=text;b.className=cls;b.onclick=fn;return b;}
-function openDialog(){if(busy)return;$('openError').textContent='';$('folderPath').value=data?.folder||$('folderPath').value;$('folderDialog').showModal();}
+function openDialog(){if(busy)return;$('openError').textContent='';$('folderPath').value=data?.folder||$('folderPath').value||preferences.view?.folder||'';$('folderDialog').showModal();}
 function suggestions(paths){$('suggestions').replaceChildren();for(const path of paths)$('suggestions').append(makeButton(path,()=>{$('folderPath').value=path;}));}
 async function browse(path=''){try{const d=await api('/api/browse?path='+encodeURIComponent(path));$('browser').hidden=false;$('browsePath').textContent=d.path||'Computer';$('browser').dataset.path=d.path;$('browser').dataset.parent=d.parent;$('folderList').replaceChildren(...d.folders.map(p=>makeButton('▸ '+(p.split(/[\\/]/).filter(Boolean).pop()||p),()=>browse(p))));$('useFolder').disabled=!d.path;}catch(e){$('openError').textContent=e.message;}}
-function applyData(d){$('preannotationWeights').value=d.preannotation_weights||'';$('datasetStatistics').disabled=false;$('manageClasses').disabled=false;data=d;all=d.images;page=0;current=null;picture=null;boxes=[];blurs=[];selected=null;selectedBlur=null;drag=null;dirty=false;undo=[];redo=[];$('datasetName').textContent=d.folder;$('datasetName').title=d.folder;$('totalCount').textContent=all.length.toLocaleString();$('search').value='';$('statusFilter').value='all';$('classFilter').replaceChildren(new Option('All classes',''),...d.categories.map(c=>new Option(c.name,c.name)));for(const id of ['drawClass','editClass'])$(id).replaceChildren(...d.categories.map(c=>new Option(c.name,c.id)));suggestions([d.folder]);filter();if(filtered.length)load(filtered[0].id,true);}
+function applyData(d){$('preannotationWeights').value=preferences.fields?.preannotationWeights??d.preannotation_weights??'';$('datasetStatistics').disabled=false;$('manageClasses').disabled=false;data=d;all=d.images;page=0;current=null;picture=null;boxes=[];blurs=[];selected=null;selectedBlur=null;drag=null;dirty=false;undo=[];redo=[];$('datasetName').textContent=d.folder;$('datasetName').title=d.folder;$('totalCount').textContent=all.length.toLocaleString();$('search').value='';$('statusFilter').value='all';$('classFilter').replaceChildren(new Option('All classes',''),...d.categories.map(c=>new Option(c.name,c.name)));for(const id of ['drawClass','editClass'])$(id).replaceChildren(...d.categories.map(c=>new Option(c.name,c.id)));restoreDatasetView(d);suggestions([d.folder]);filter();
+const last = all.find(entry => entry.relative === preferences.view?.image && preferences.view?.folder === d.folder);
+const resume = last ?? filtered[0] ?? all[0];
+if(resume)load(resume.id,true);
+else savePreferences();}
 function filter(keep=false){if(!data)return;const q=$('search').value.toLowerCase().trim(),status=$('statusFilter').value,cls=$('classFilter').value;filtered=all.filter(e=>{const searchable=[e.name,e.relative,e.annotation,...e.annotation_ids,...e.classes].join(' ').toLowerCase();return(!q||searchable.includes(q))&&(!cls||e.classes.includes(cls))&&(status==='all'||status==='reviewed'&&e.reviewed||status==='unreviewed'&&!e.reviewed||status==='empty'&&!e.count||status==='missing'&&e.missing||status==='error'&&e.error);});if(!keep)page=0;page=Math.min(page,Math.max(0,Math.ceil(filtered.length/60)-1));renderList();progress();navigation();}
 function progress(){const done=all.filter(e=>e.reviewed).length;$('footerReviewCount').textContent=`${done.toLocaleString()} reviewed`;$('reviewCount').textContent=`${done.toLocaleString()} / ${all.length.toLocaleString()} reviewed`;$('progressBar').style.width=100*done/Math.max(1,all.length)+'%';$('matchCount').textContent=filtered.length===all.length?'':`${filtered.length} found`;}
-function renderList(){const list=$('imageList');list.replaceChildren();for(const e of filtered.slice(page*60,page*60+60)){const b=document.createElement('button');b.className='imageItem'+(current?.id===e.id?' selected':'');b.dataset.id=e.id;b.onclick=()=>load(e.id);const img=new Image();img.loading='lazy';img.src=imgURL(e.id,true);img.alt='';const meta=document.createElement('div');meta.className='meta';const title=document.createElement('b');title.textContent=e.name;title.title=e.name;const sub=document.createElement('small');sub.textContent=e.relative.split('/').slice(0,-1).join('/');sub.title=e.relative;const status=document.createElement('small');status.className=e.error||e.missing?'warn':'itemStatus';status.textContent=e.error?'⚠ Label needs attention':`${e.reviewed?'✓ Reviewed · ':''}${e.count} box${e.count===1?'':'es'}${e.missing?' · no label file':''}`;meta.append(title,sub,status);b.append(img,meta);list.append(b);}if(!filtered.length){const empty=document.createElement('div');empty.className='emptyLibrary';empty.textContent='No images match this search or filter.';list.append(empty);}$('pageInfo').textContent=filtered.length?`${page*60+1}–${Math.min(filtered.length,page*60+60)} of ${filtered.length}`:'0 results';$('pagePrev').disabled=!page;$('pageNext').disabled=(page+1)*60>=filtered.length;}
+function renderList(){const list=$('imageList');list.replaceChildren();for(const e of filtered.slice(page*60,page*60+60)){const b=document.createElement('button');b.className='imageItem'+(current?.id===e.id?' selected':'');b.dataset.id=e.id;b.onclick=()=>load(e.id);const img=new Image();img.loading='lazy';img.src=imgURL(e.id,true);img.alt='';const meta=document.createElement('div');meta.className='meta';const title=document.createElement('b');title.textContent=e.name;title.title=e.name;const sub=document.createElement('small');sub.textContent=e.relative.split('/').slice(0,-1).join('/');sub.title=e.relative;const status=document.createElement('small');status.className=e.error||e.missing?'warn':'itemStatus';status.textContent=e.error?'⚠ Label needs attention':`${e.reviewed?'✓ Reviewed · ':''}${e.count} box${e.count===1?'':'es'}${e.missing?' · no label file':''}`;const counts=document.createElement('small');counts.className='suggestionCounts';renderSuggestionCounts(counts,e);meta.append(title,sub,status,counts);b.append(img,meta);list.append(b);}if(!filtered.length){const empty=document.createElement('div');empty.className='emptyLibrary';empty.textContent='No images match this search or filter.';list.append(empty);}$('pageInfo').textContent=filtered.length?`${page*60+1}–${Math.min(filtered.length,page*60+60)} of ${filtered.length}`:'0 results';$('pagePrev').disabled=!page;$('pageNext').disabled=(page+1)*60>=filtered.length;}
 async function load(id,force=false){if(busy&&!force)return;if(dirty&&!force&&!confirm('Discard the unsaved edits on this image? Choose Cancel to save them first.'))return;const serial=++loadSerial;busy=true;updateSave();$('loading').hidden=false;try{const d=await api('/api/image?id='+id);const im=new Image();im.src=`/api/pixels?id=${id}&token=${encodeURIComponent(token)}&v=${d.revision}`;await im.decode();if(serial!==loadSerial)return;current=d;predictions=[];predictionRequest=null;privacySuggestions=[];privacyRequest=null;
 $('predictionStatus').textContent='Dashed blue boxes are suggestions. Accept a box to edit or save it.';
-picture=im;originalPicture=im;boxes=structuredClone(d.boxes);blurs=[];selected=null;selectedBlur=null;drag=null;dirty=false;undo=[];redo=[];if(previewURL)URL.revokeObjectURL(previewURL);previewURL=null;previewSerial++;$('welcome').hidden=true;$('imageName').textContent=d.name;$('imageName').title=d.name;$('imagePath').textContent=`${d.relative} · ${d.width} × ${d.height}`;$('imagePath').title=d.relative;$('formatInfo').textContent=`Source: ${d.format.toUpperCase()} · Save: ${d.saves.join(' + ')}`;$('backupInfo').textContent=d.history?`Last saved ${d.history.saved}`:'';const warnings=[d.error,d.formats_disagree?'YOLO and COCO differ for this image. Saving replaces both with the boxes displayed here.':'',...data.warnings.filter(w=>!w.startsWith('YOLO and COCO'))];$('notice').hidden=!warnings.some(Boolean);$('notice').textContent=warnings.filter(Boolean).join(' ');const index=filtered.findIndex(e=>e.id===id);if(index>=0)page=Math.floor(index/60);renderList();inspector();fit();navigation();canvas.focus({preventScroll:true});}catch(e){toast(e.message,true);}finally{if(serial===loadSerial){busy=false;$('loading').hidden=true;inspector();updateSave();maybePreannotate();maybeSuggestPrivacy();}}}
+picture=im;originalPicture=im;boxes=structuredClone(d.boxes);blurs=[];selected=null;selectedBlur=null;drag=null;dirty=false;undo=[];redo=[];if(previewURL)URL.revokeObjectURL(previewURL);previewURL=null;previewSerial++;$('welcome').hidden=true;$('imageName').textContent=d.name;$('imageName').title=d.name;$('imagePath').textContent=`${d.relative} · ${d.width} × ${d.height}`;$('imagePath').title=d.relative;$('formatInfo').textContent=`Source: ${d.format.toUpperCase()} · Save: ${d.saves.join(' + ')}`;$('backupInfo').textContent=d.history?`Last saved ${d.history.saved}`:'';const warnings=[d.error,d.formats_disagree?'YOLO and COCO differ for this image. Saving replaces both with the boxes displayed here.':'',...data.warnings.filter(w=>!w.startsWith('YOLO and COCO'))];$('notice').hidden=!warnings.some(Boolean);$('notice').textContent=warnings.filter(Boolean).join(' ');const index=filtered.findIndex(e=>e.id===id);if(index>=0)page=Math.floor(index/60);renderList();inspector();fit();navigation();canvas.focus({preventScroll:true});savePreferences();}catch(e){toast(e.message,true);}finally{if(serial===loadSerial){busy=false;$('loading').hidden=true;inspector();updateSave();maybePreannotate();maybeSuggestPrivacy();}}}
 function navigation(){const i=filtered.findIndex(e=>e.id===current?.id);$('position').textContent=current?`${i>=0?i+1:'–'} / ${filtered.length} in view`:'No image selected';$('previous').disabled=!current||i<=0;$('next').disabled=!current||i<0||i>=filtered.length-1;$('previousUnmade').disabled=!current||!filtered.slice(0,Math.max(0,i)).some(e=>!e.reviewed);$('nextUnmade').disabled=!current||!filtered.slice(i+1).some(e=>!e.reviewed);}
 function advance(direction,unmade=false){if(!current)return;const i=filtered.findIndex(e=>e.id===current.id);if(i<0){if(filtered.length)load(filtered[0].id);return;}for(let j=i+direction;j>=0&&j<filtered.length;j+=direction)if(!unmade||!filtered[j].reviewed){load(filtered[j].id);return;}toast(unmade?'No more unreviewed images in this direction.':'End of this view.');}
 async function save(next = false) {
@@ -57,15 +64,16 @@ async function save(next = false) {
     updateSave();
   }
 }
-function inspector(){if(!data)return;renderPredictions();renderPrivacySuggestions();$('boxCount').textContent=boxes.length;$('annotationList').replaceChildren();for(const [i,b]of boxes.entries()){const row=document.createElement('div');row.className='annotationRow'+(selected===i?' active':'');const choose=makeButton('',()=>{selected=i;selectedBlur=null;setTool('select');inspector();draw();});const swatch=document.createElement('span');swatch.className='swatch';swatch.style.background=color(b.category);choose.append(swatch,document.createTextNode(`${i+1}. ${category(b.category).name}`));choose.title=`Annotation ${b.id} · ${b.bbox.map(Math.round).join(', ')}`;const del=makeButton('×',()=>{if(editable()){remember();boxes.splice(i,1);selected=null;selectedBlur=null;changed();}},'delete');del.title='Delete box';del.disabled=!editable();row.append(choose,del);$('annotationList').append(row);}const b=boxes[selected];$('boxEditor').hidden=!b;if(b){$('editClass').value=b.category;['coordX','coordY','coordW','coordH'].forEach((id,i)=>$(id).value=Math.round(b.bbox[i]*100)/100);}$('blurCount').textContent=blurs.length;$('blurList').replaceChildren(...blurs.map((r,i)=>{const row=document.createElement('div');
+function inspector(){updatePrivacyEffectVisibility();if(!data)return;renderPredictions();renderPrivacySuggestions();$('boxCount').textContent=boxes.length;$('annotationList').replaceChildren();for(const [i,b]of boxes.entries()){const row=document.createElement('div');row.className='annotationRow'+(selected===i?' active':'');const choose=makeButton('',()=>{selected=i;selectedBlur=null;setTool('select');inspector();draw();});const swatch=document.createElement('span');swatch.className='swatch';swatch.style.background=color(b.category);choose.append(swatch,document.createTextNode(`${i+1}. ${category(b.category).name}`));choose.title=`Annotation ${b.id} · ${b.bbox.map(Math.round).join(', ')}`;const del=makeButton('×',()=>{if(editable()){remember();boxes.splice(i,1);selected=null;selectedBlur=null;changed();}},'delete');del.title='Delete box';del.disabled=!editable();row.append(choose,del);$('annotationList').append(row);}const b=boxes[selected];$('boxEditor').hidden=!b;if(b){$('editClass').value=b.category;['coordX','coordY','coordW','coordH'].forEach((id,i)=>$(id).value=Math.round(b.bbox[i]*100)/100);}$('blurCount').textContent=blurs.length;$('blurList').replaceChildren(...blurs.map((r,i)=>{const row=document.createElement('div');
 row.className='blurRow'+(selectedBlur===i?' active':'');
-const select=makeButton(`Region ${i+1} · ${Math.round(r.bbox[2])} × ${Math.round(r.bbox[3])} · ${r.radius}px`,()=>{
+const select=makeButton(`Region ${i+1} · ${Math.round(r.bbox[2])} × ${Math.round(r.bbox[3])} · ${r.method === 'pixelate' ? 'Pixelate' : 'Blur'} ${r.radius}px`,()=>{
   selected=null;selectedBlur=i;setTool('select');inspector();draw();
 });
 select.setAttribute('aria-pressed', String(selectedBlur===i));
 if(selectedBlur===i){
+  $('privacyEffect').value=r.method || 'gaussian';
   $('blurRadius').value=r.radius;
-  $('radiusValue').textContent=r.radius+' px';
+  updatePrivacyStrength();
 }
 const remove=makeButton('×',()=>{if(!editable())return;remember();blurs.splice(i,1);selectedBlur=null;changed();});
 remove.setAttribute('aria-label', `Delete blur region ${i+1}`);
@@ -228,7 +236,7 @@ function endDrag(event) {
     if (bbox[2]>=1 && bbox[3]>=1) {
       remember();
       if (finished.tool === 'blur') {
-        blurs.push({bbox, radius: Number($('blurRadius').value)});
+        blurs.push({bbox, method: $('privacyEffect').value, radius: Number($('blurRadius').value)});
         selectedBlur = blurs.length-1;
         selected = null;
       } else {
@@ -290,8 +298,21 @@ if(boxes[selected].category===categoryId)return;
 remember();boxes[selected].category=categoryId;changed();};
 function applyCoordinates(){if(!editable()||!boxes[selected])return;const box=['coordX','coordY','coordW','coordH'].map(id=>Number($(id).value));if(box.some(x=>!Number.isFinite(x))||box[0]<0||box[1]<0||box[2]<1||box[3]<1||box[0]+box[2]>current.width||box[1]+box[3]>current.height){toast('Keep the box inside the image.',true);inspector();return;}if(box.every((value,i)=>value===boxes[selected].bbox[i]))return;remember();boxes[selected].bbox=box;changed();}
 $('applyCoordinates').onclick=applyCoordinates;for(const id of ['coordX','coordY','coordW','coordH'])$(id).onchange=applyCoordinates;
-$('previewBlur').onclick=async()=>{if(!editable()||!blurs.length)return;const version=++previewSerial;try{$('previewBlur').disabled=true;const r=await fetch('/api/blur-preview',{method:'POST',headers:{'X-Review-Token':token,'Content-Type':'application/json'},body:JSON.stringify({id:current.id,blur:blurs})});if(!r.ok)throw Error((await r.json()).error);const url=URL.createObjectURL(await r.blob());const image=new Image();image.src=url;await image.decode();if(version!==previewSerial){URL.revokeObjectURL(url);return;}if(previewURL)URL.revokeObjectURL(previewURL);previewURL=url;picture=image;draw();toast('Gaussian preview ready. Save to apply it.');}catch(e){toast(e.message,true);}finally{$('previewBlur').disabled=!blurs.length;}};
-$('blurRadius').oninput=()=>{$('radiusValue').textContent=$('blurRadius').value+' px';};
+$('previewBlur').onclick=async()=>{if(!editable()||!blurs.length)return;const version=++previewSerial;try{$('previewBlur').disabled=true;const r=await fetch('/api/blur-preview',{method:'POST',headers:{'X-Review-Token':token,'Content-Type':'application/json'},body:JSON.stringify({id:current.id,blur:blurs})});if(!r.ok)throw Error((await r.json()).error);const url=URL.createObjectURL(await r.blob());const image=new Image();image.src=url;await image.decode();if(version!==previewSerial){URL.revokeObjectURL(url);return;}if(previewURL)URL.revokeObjectURL(previewURL);previewURL=url;picture=image;draw();toast('Privacy preview ready. Save to apply it.');}catch(e){toast(e.message,true);}finally{$('previewBlur').disabled=!blurs.length;}};
+function updatePrivacyStrength() {
+  $('strengthLabel').textContent = $('privacyEffect').value === 'pixelate' ? 'Pixel block size' : 'Gaussian strength';
+  $('radiusValue').textContent = $('blurRadius').value + ' px';
+}
+$('privacyEffect').onchange = () => {
+  updatePrivacyStrength();
+  const region = blurs[selectedBlur];
+  const method = $('privacyEffect').value;
+  if (!editable() || !region || (region.method || 'gaussian') === method) return;
+  remember();
+  region.method = method;
+  changed();
+};
+$('blurRadius').oninput = updatePrivacyStrength;
 $('blurRadius').onchange=()=>{
   const region=blurs[selectedBlur];
   const radius=Number($('blurRadius').value);
@@ -303,8 +324,8 @@ $('blurRadius').onchange=()=>{
 document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));$('openFolder').onclick=$('welcomeOpen').onclick=openDialog;$('browseFolder').onclick=()=>browse($('folderPath').value);$('browseUp').onclick=()=>browse($('browser').dataset.parent);$('useFolder').onclick=()=>{$('folderPath').value=$('browser').dataset.path;$('browser').hidden=true;};
 $('loadDataset').onclick=async()=>{if(dirty&&!confirm('Discard unsaved edits and open another dataset?'))return;$('loadDataset').disabled=true;$('loadDataset').textContent='Scanning dataset…';$('openError').textContent='';try{const d=await api('/api/open',{folder:$('folderPath').value,mode:$('formatMode').value});$('folderDialog').close();applyData(d);}catch(e){$('openError').textContent=e.message;}finally{$('loadDataset').disabled=false;$('loadDataset').textContent='Open dataset';}};
 $('helpButton').onclick=()=>$('helpDialog').showModal();$('doneHelp').onclick=()=>$('helpDialog').close();$('search').oninput=()=>filter();$('statusFilter').onchange=$('classFilter').onchange=()=>filter();$('pagePrev').onclick=()=>{page--;renderList();};$('pageNext').onclick=()=>{page++;renderList();};$('previous').onclick=()=>advance(-1);$('next').onclick=()=>advance(1);$('previousUnmade').onclick=()=>advance(-1,true);$('nextUnmade').onclick=()=>advance(1,true);$('save').onclick=()=>save();$('saveNext').onclick=()=>save(true);$('deleteBox').onclick=deleteSelected;$('undo').onclick=()=>restoreStack(undo,redo);$('redo').onclick=()=>restoreStack(redo,undo);$('fit').onclick=fit;$('actual').onclick=()=>zoom(1/scale);$('zoomIn').onclick=()=>zoom(1.3);$('zoomOut').onclick=()=>zoom(1/1.3);$('toggleBoxes').onclick=()=>{visible=!visible;$('toggleBoxes').textContent=visible?'◉ Boxes':'○ Boxes';draw();};
-window.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)||document.querySelector('dialog[open]'))return;if(e.code==='Space'){space=true;e.preventDefault();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();save();}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();restoreStack(e.shiftKey?redo:undo,e.shiftKey?undo:redo);}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();restoreStack(redo,undo);}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();deleteSelected();}else if(e.key==='ArrowLeft'){e.preventDefault();advance(-1);}else if(e.key==='ArrowRight'){e.preventDefault();advance(1);}else if(e.key==='Enter'){if(document.activeElement.matches('button:not(#saveNext)'))return;e.preventDefault();if(!e.repeat)save(true);}else if(e.key.toLowerCase()==='v')setTool('select');else if(e.key.toLowerCase()==='b')setTool('box');else if(e.key.toLowerCase()==='g'){if(e.shiftKey){e.preventDefault();if(!e.repeat)acceptPrivacy(pendingPrivacySuggestions());}else setTool('blur');}else if(e.key.toLowerCase()==='h')$('toggleBoxes').click();else if(e.key==='Escape'){selected=selectedBlur=null;setTool('select');inspector();draw();}});window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>space=false);window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});new ResizeObserver(canvasSize).observe($('canvasWrap'));
-api('/api/state').then(d=>{if(d.folder)applyData(d);else suggestions(d.suggested||[]);}).catch(e=>toast(e.message,true));
+window.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)||document.querySelector('dialog[open]'))return;if(e.code==='Space'){space=true;e.preventDefault();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();save();}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();restoreStack(e.shiftKey?redo:undo,e.shiftKey?undo:redo);}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();restoreStack(redo,undo);}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();deleteSelected();}else if(e.key==='ArrowLeft'){e.preventDefault();advance(-1);}else if(e.key==='ArrowRight'){e.preventDefault();advance(1);}else if(e.key==='Enter'){if(document.activeElement.matches('button:not(#saveNext)'))return;e.preventDefault();if(!e.repeat)save(true);}else if(e.key.toLowerCase()==='v')setTool('select');else if(e.key.toLowerCase()==='b'){if(e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();if(!e.repeat)acceptAllPredictions();}else if(!e.shiftKey)setTool('box');}else if(e.key.toLowerCase()==='g'){if(e.shiftKey){e.preventDefault();if(!e.repeat)acceptPrivacy(pendingPrivacySuggestions());}else setTool('blur');}else if(e.key.toLowerCase()==='h')$('toggleBoxes').click();else if(e.key==='Escape'){selected=selectedBlur=null;setTool('select');inspector();draw();}});window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>space=false);window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});new ResizeObserver(canvasSize).observe($('canvasWrap'));
+
 
 let classSuggestion = null;
 
@@ -635,8 +656,23 @@ function acceptPrediction(prediction) {
     $('className').focus();
     return;
   }
+  addPredictions([prediction]);
+}
+
+function acceptAllPredictions() {
+  if (!editable()) return;
+  const pending = pendingPredictions();
+  const allowed = new Set(data.categories.map(item => item.id));
+  const matched = pending.filter(item => allowed.has(item.category));
+  if (matched.length) addPredictions(matched);
+  else if (pending.length) acceptPrediction(pending[0]);
+}
+
+function addPredictions(items) {
   remember();
-  boxes.push({id: prediction.id, category: prediction.category, bbox: prediction.bbox.slice()});
+  for (const prediction of items) {
+    boxes.push({id: prediction.id, category: prediction.category, bbox: prediction.bbox.slice()});
+  }
   selected = boxes.length - 1;
   selectedBlur = null;
   setTool('select');
@@ -653,9 +689,23 @@ function drawPredictions() {
   ctx.restore();
 }
 
+function privacyModelName(source) {
+  const field = {
+    'Dashcam YOLOv8': 'dashcamConfidence',
+    'YuNet': 'faceConfidence',
+    'OpenCV SSD face': 'ssdFaceConfidence',
+    'YOLOv9 plate': 'plateConfidence',
+    'YOLOv9-s plate': 'plateSConfidence',
+  }[source];
+  const label = field && $(field)?.labels?.[0]?.textContent;
+  return label ? label.trim().replace(/\s*\(%\)$/, '') : source;
+}
+
 function modelVoteCount(sources) {
+  sources = sources.map(privacyModelName);
   const count = document.createElement('span');
   count.className = 'modelVoteCount';
+  count.title = ''; // Suppress the parent label's native tooltip.
   count.tabIndex = 0;
   count.textContent = `${sources.length} model${sources.length === 1 ? '' : 's'}`;
   count.setAttribute('aria-label', 'Contributing models: ' + sources.join(', '));
@@ -684,7 +734,7 @@ function modelVoteCount(sources) {
         ? anchor.bottom+4 : Math.max(4, anchor.top-tooltip.offsetHeight-4);
       tooltip.style.left = left + 'px';
       tooltip.style.top = top + 'px';
-    }, 2000);
+    }, 1000);
   };
   count.addEventListener('pointerenter', show);
   count.addEventListener('pointerleave', hide);
@@ -759,9 +809,14 @@ function layoutPredictionLabels(viewport) {
   }
 }
 
+$('acceptPredictionsAll').onclick = acceptAllPredictions;
+
 function renderPredictions() {
+  updateSuggestionRows();
   const pending = pendingPredictions();
   $('predictionCount').textContent = pending.length;
+  $('acceptPredictionsAll').hidden = !pending.length;
+  $('acceptPredictionsAll').disabled = !editable();
   const list = $('predictionList');
   list.replaceChildren();
   for (const prediction of pending) {
@@ -829,10 +884,17 @@ function privacyTypes() {
   return new Set([...$('privacyTypes').querySelectorAll('input:checked')].map(input => input.value));
 }
 
+function visiblePrivacyCandidate(region, types) {
+  return types.has(region.kind) &&
+    (!region.already_pixelated || !$('hidePixelatedPlates').checked) &&
+    (!$('hideUnverifiedFaces').checked || (region.face_features !== false && region.human_context !== false)) &&
+    (region.plate_text_readable !== false || !$('hideUnreadablePlates').checked);
+}
+
 function pendingPrivacySuggestions() {
   if (!$('autoPrivacy').checked) return [];
   const types = privacyTypes();
-  return privacySuggestions.filter(region => types.has(region.kind) &&
+  return privacySuggestions.filter(region => visiblePrivacyCandidate(region, types) &&
     !blurs.some(blur => blur.suggestionId === region.id || coversAnnotation(blur.bbox, region.bbox)));
 }
 
@@ -843,7 +905,9 @@ function acceptPrivacy(suggestions) {
   if (!accepted.length) return;
   remember();
   for (const region of accepted) {
-    blurs.push({bbox: region.bbox.slice(), radius: region.radius, suggestionId: region.id});
+    const method = $('privacyEffect').value;
+    const radius = method === 'pixelate' ? Number($('blurRadius').value) : region.radius;
+    blurs.push({bbox: region.bbox.slice(), method, radius, suggestionId: region.id});
   }
   selected = null;
   selectedBlur = blurs.length-1;
@@ -865,6 +929,7 @@ function drawPrivacySuggestions() {
 }
 
 function renderPrivacySuggestions() {
+  updateSuggestionRows();
   const pending = pendingPrivacySuggestions();
   $('acceptPrivacyAll').disabled = !pending.length || !editable();
   const list = $('privacyList');
@@ -873,7 +938,7 @@ function renderPrivacySuggestions() {
     const row = document.createElement('div');
     row.className = 'predictionRow privacyRow' + (region.weak ? ' weakPrivacy' : '');
     const description = document.createElement('div');
-    description.textContent = `${region.name} · ${region.sources.join(' + ')}${region.weak ? ' · weaker' : ''}`;
+    description.textContent = `${region.name} · ${region.sources.map(privacyModelName).join(' + ')}${Math.round(region.confidence * 100)}% · ${region.vehicle_context === false ? 'no vehicle detected' : region.weak ? 'weaker' : 'detector score'}`;
     const accept = makeButton('Accept blur', () => acceptPrivacy([region]));
     const dismiss = makeButton('Dismiss', () => {
       privacySuggestions = privacySuggestions.filter(item => item !== region);
@@ -923,7 +988,7 @@ async function maybeSuggestPrivacy() {
       name: region.kind === 'face' ? 'face' : 'license plate',
     }));
     request.pending = false;
-    request.failed = result.warnings.length > 0;
+    request.failed = result.detectors.length === 0;
     request.message = `${result.cached ? 'Saved · ' : ''}${result.regions.length} proposals · ${result.detectors.length}/5 detectors · ${result.seconds} s`;
     if (result.warnings.length) request.message += '. ' + result.warnings.join(' · ');
   } catch (error) {
@@ -941,41 +1006,135 @@ function refreshPrivacySuggestions() {
   draw();
   maybeSuggestPrivacy();
 }
-for (const id of ['autoPrivacy', 'privacyTypes', 'privacySettings']) $(id).onchange = refreshPrivacySuggestions;
+for (const id of ['autoPrivacy', 'privacySettings']) $(id).onchange = refreshPrivacySuggestions;
 $('acceptPrivacyAll').onclick = () => acceptPrivacy(pendingPrivacySuggestions());
 
-const prefetchedPredictions = new Set();
-let prefetchInFlight = false;
+const prefetchedPredictions = new Map();
+const prefetchIssues = new Map();
+
+function suggestionCacheKey(folder, mode, request, image) {
+  const namespace = JSON.stringify([folder, mode, request.endpoint, request.options]);
+  return JSON.stringify([namespace, image.relative]);
+}
+
+function renderSuggestionCounts(target, image) {
+  target.replaceChildren();
+  const selectedImage = image.id === current?.id;
+  const classes = enabledPredictionClasses();
+  const types = privacyTypes();
+  const cached = request => request && !request.pending &&
+    prefetchedPredictions.get(suggestionCacheKey(data.folder, data.mode, request, image));
+  const road = $('autoPreannotation').checked && classes.size && (selectedImage
+    ? pendingPredictions().length
+    : cached(predictionRequest)?.predictions?.filter(item => classes.has(predictionClass(item.name))).length);
+  const privacy = $('autoPrivacy').checked && types.size && (selectedImage
+    ? pendingPrivacySuggestions().length
+    : cached(privacyRequest)?.regions?.filter(region => visiblePrivacyCandidate(region, types)).length);
+  for (const [count, kind, label] of [
+    [privacy, 'privacy', 'privacy box'], [road, 'annotation', 'new annotation'],
+  ]) {
+    if (!count) continue;
+    const badge = document.createElement('span');
+    badge.className = 'suggestionCount ' + kind;
+    badge.textContent = `${count} ${label}${count === 1 ? '' : kind === 'privacy' ? 'es' : 's'} suggested`;
+    if (!selectedImage && kind === 'annotation') {
+      badge.title = 'Candidate count before checking overlap with existing annotations.';
+    }
+    target.append(badge);
+  }
+}
+
+function updateSuggestionRows() {
+  const rows = $('imageList').querySelectorAll('.imageItem');
+  filtered.slice(page*60, page*60+60).forEach((image, index) => {
+    const row = rows[index];
+    if (row?.dataset.id === String(image.id)) {
+      renderSuggestionCounts(row.querySelector('.suggestionCounts'), image);
+    }
+  });
+}
+const restoredPredictionNamespaces = new Set();
+let restoringPredictions = false;
+
+async function restorePredictionProgress(dataset, request, images, namespace) {
+  restoringPredictions = true;
+  try {
+    for (let start = 0; start < images.length; start += 200) {
+      if (dataset !== data || !$('backgroundPredictions').checked ||
+          ![predictionRequest, privacyRequest].some(active => active &&
+            suggestionCacheKey(dataset.folder, dataset.mode, active, {relative: ''}) === namespace)) return;
+      const batch = images.slice(start, start + 200);
+      const hits = await api(request.endpoint, {
+        cache_ids: batch.map(image => image.id), folder: dataset.folder, ...request.options,
+      });
+      for (const image of batch) {
+        if (Object.hasOwn(hits, image.id)) {
+          prefetchedPredictions.set(suggestionCacheKey(dataset.folder, dataset.mode, request, image), hits[image.id]);
+        }
+      }
+      if (dataset === data) updateSuggestionRows();
+    }
+    restoredPredictionNamespaces.add(namespace);
+  } catch (error) {
+    // Individual queue requests can still reuse the disk cache if bulk loading fails.
+    console.warn('Could not restore prediction progress', error);
+    restoredPredictionNamespaces.add(namespace);
+  } finally {
+    restoringPredictions = false;
+  }
+}
+
+let prefetchStartedAt = 0;
 let prefetchDelayUntil = 0;
+let prefetchWait = '';
 
 async function prefetchPredictions() {
   const status = $('prefetchStatus');
   const roadEnabled = $('autoPreannotation').checked && enabledPredictionClasses().size;
   const privacyEnabled = $('autoPrivacy').checked && privacyTypes().size;
-  status.hidden = !current || !data?.prediction_cache || !(roadEnabled || privacyEnabled);
+  status.hidden = !$('backgroundPredictions').checked || !current || !data?.prediction_cache || !(roadEnabled || privacyEnabled);
   if (status.hidden) return;
   const requests = [roadEnabled ? predictionRequest : null,
     privacyEnabled ? privacyRequest : null].filter(Boolean);
   const available = requests.filter(request => !request.failed && !request.pending);
   const index = filtered.findIndex(image => image.id === current.id);
   const folder = data.folder;
-  const namespaces = available.map(request => JSON.stringify([folder, data.mode, request.endpoint, request.options]));
+
+  if (!busy && !requests.some(request => request.pending)) {
+    for (const request of available) {
+      const namespace = suggestionCacheKey(folder, data.mode, request, {relative: ''});
+      if (restoredPredictionNamespaces.has(namespace)) continue;
+      status.textContent = 'Restoring saved prediction progress…';
+      if (!restoringPredictions) {
+        void restorePredictionProgress(data, request, all.filter(image => !image.error), namespace);
+      }
+      return;
+    }
+  }
+
   let remaining = 0;
+  let issueCount = 0;
+  let latestIssue = '';
   let nextJob;
   for (let i = index < 0 ? filtered.length : index+1; i < filtered.length; i++) {
     const image = filtered[i];
     if (image.error) continue;
     let needsWork = false;
+    let imageIssue = '';
     for (let j = 0; j < available.length; j++) {
-      const key = JSON.stringify([namespaces[j], image.relative]);
-      if (prefetchedPredictions.has(key)) continue;
+      const key = suggestionCacheKey(folder, data.mode, available[j], image);
+      if (prefetchIssues.has(key)) imageIssue = prefetchIssues.get(key);
+      if (prefetchedPredictions.has(key) || prefetchIssues.has(key)) continue;
       needsWork = true;
       nextJob ??= {image, request: available[j], key};
     }
     if (needsWork) remaining++;
+    if (imageIssue) { issueCount++; latestIssue = imageIssue; }
   }
   const show = (state, count = true) => {
-    const text = state + (count ? ` · ${remaining.toLocaleString()} images left to check or cache` : '');
+    const text = state + (count ? ` · ${remaining.toLocaleString()} images left to check or cache` : '') +
+      (issueCount ? ` · ${issueCount.toLocaleString()} with detector issues` : '');
+    status.title = latestIssue;
     if (status.textContent !== text) status.textContent = text;
   };
   if (busy || requests.some(request => request.pending)) {
@@ -986,26 +1145,140 @@ async function prefetchPredictions() {
     show('Background predictions waiting for a detector', false);
     return;
   }
-  if (prefetchInFlight) { show('Background predictions running'); return; }
+  if (prefetchStartedAt) {
+    if (Date.now() - prefetchStartedAt > 750) show('Background predictions running');
+    return;
+  }
   if (!nextJob) { show('Background predictions ready'); return; }
-  if (drag || document.hidden || document.querySelector('dialog[open]') || Date.now() < prefetchDelayUntil) {
+  if (drag || document.hidden || document.querySelector('dialog[open]')) {
     show('Background predictions paused');
     return;
   }
 
+  if (Date.now() < prefetchDelayUntil) {
+    show(prefetchWait);
+    return;
+  }
+
   const {image, request, key} = nextJob;
-  prefetchInFlight = true;
-  show('Background predictions running');
+  prefetchStartedAt = Date.now();
+  if (!prefetchWait) show('Background predictions running');
   try {
     const result = await api(request.endpoint, {id: image.id, folder, background: true, ...request.options});
-    if (result.deferred) prefetchDelayUntil = Date.now() + 1800;
-    else if (result.warnings?.length) prefetchDelayUntil = Date.now() + 8000;
-    else prefetchedPredictions.add(key);
-  } catch {
-    prefetchDelayUntil = Date.now() + 8000;
+    if (result.deferred) {
+      prefetchDelayUntil = Date.now() + 1800;
+      prefetchWait = result.reason || 'Waiting for background inference capacity';
+      show(prefetchWait);
+    } else {
+      prefetchWait = '';
+      if (result.warnings?.length) prefetchIssues.set(key, result.warnings.join(' · '));
+      prefetchedPredictions.set(key, result);
+      updateSuggestionRows();
+    }
+  } catch (error) {
+    prefetchIssues.set(key, error.message);
   } finally {
-    prefetchInFlight = false;
+    prefetchStartedAt = 0;
   }
 }
 
+$('backgroundPredictions').onchange = prefetchPredictions;
 setInterval(prefetchPredictions, 650);
+
+const preferenceFields = ['backgroundPredictions', 'autoPreannotation', 'autoPrivacy', 'suppressOverlappingPredictions',
+  'preannotationWeights', 'preannotationConfidence', 'dashcamConfidence', 'faceConfidence',
+  'plateConfidence', 'ssdFaceConfidence', 'plateSConfidence', 'hidePixelatedPlates', 'hideUnreadablePlates', 'hideUnverifiedFaces', 'privacyEffect', 'blurRadius', 'formatMode'];
+const preferenceGroups = ['predictionFilters', 'privacyTypes'];
+const viewFields = ['search', 'statusFilter', 'classFilter', 'drawClass'];
+let preferences = {};
+let preferencesReady = false;
+let preferenceWrite = Promise.resolve();
+let lastPreferences = '';
+
+function restorePreferences(saved) {
+  preferences = saved;
+  for (const id of preferenceFields) {
+    const input = $(id);
+    const value = saved.fields?.[id];
+    if (input.type === 'checkbox' && typeof value === 'boolean') input.checked = value;
+    else if (typeof value === 'string') input.value = value;
+  }
+  for (const id of preferenceGroups) {
+    const enabled = saved.groups?.[id];
+    if (!Array.isArray(enabled)) continue;
+    for (const input of $(id).querySelectorAll('input[type=checkbox]')) {
+      input.checked = enabled.includes(input.value);
+    }
+  }
+  updatePrivacyStrength();
+  visible = saved.boxesVisible !== false;
+  $('toggleBoxes').textContent = visible ? '◉ Boxes' : '○ Boxes';
+  if (saved.view?.folder) $('folderPath').value = saved.view.folder;
+}
+
+function restoreDatasetView(dataset) {
+  const view = preferences.view;
+  if (view?.folder !== dataset.folder) return;
+  for (const id of viewFields) {
+    const input = $(id);
+    const value = view[id];
+    if (typeof value === 'string' && (input.tagName !== 'SELECT' ||
+      [...input.options].some(option => option.value === value))) input.value = value;
+  }
+}
+
+function savePreferences() {
+  if (!preferencesReady) return;
+  const fields = Object.fromEntries(preferenceFields.map(id => {
+    const input = $(id);
+    return [id, input.type === 'checkbox' ? input.checked : input.value];
+  }));
+  const groups = Object.fromEntries(preferenceGroups.map(id =>
+    [id, [...$(id).querySelectorAll('input:checked')].map(input => input.value)]));
+  const view = data?.folder ? {
+    folder: data.folder, mode: data.mode,
+    image: current?.relative ?? (preferences.view?.folder === data.folder ? preferences.view.image : undefined),
+    ...Object.fromEntries(viewFields.map(id => [id, $(id).value])),
+  } : preferences.view;
+  preferences = {fields, groups, view, boxesVisible: visible};
+  const snapshot = preferences;
+  const serialized = JSON.stringify(snapshot);
+  if (serialized === lastPreferences) return;
+  lastPreferences = serialized;
+  preferenceWrite = preferenceWrite.then(() => api('/api/preferences', snapshot)).catch(error => {
+    if (lastPreferences === serialized) lastPreferences = '';
+    toast('Could not save review settings: ' + error.message, true);
+  });
+}
+
+for (const id of [...preferenceFields, ...preferenceGroups, ...viewFields]) {
+  $(id).addEventListener('change', savePreferences);
+}
+$('toggleBoxes').addEventListener('click', savePreferences);
+
+Promise.all([api('/api/state'), api('/api/preferences').catch(() => ({}))])
+  .then(async ([state, saved]) => {
+    restorePreferences(saved);
+    preferencesReady = true;
+    if (state.folder) {
+      applyData(state);
+      return;
+    }
+    const folder = saved.view?.folder;
+    suggestions([...new Set([folder, ...(state.suggested || [])].filter(Boolean))]);
+    if (!folder) return;
+    $('loading').textContent = 'Reopening previous dataset…';
+    $('loading').hidden = false;
+    try {
+      const dataset = await api('/api/open', {
+        folder, mode: saved.view.mode ?? $('formatMode').value,
+      });
+      $('loading').textContent = 'Loading image…';
+      applyData(dataset);
+      if (dataset.images.length) return;
+    } catch (error) {
+      toast('Could not reopen the previous dataset: ' + error.message, true);
+    }
+    $('loading').textContent = 'Loading image…';
+    $('loading').hidden = true;
+  }).catch(error => toast(error.message, true));

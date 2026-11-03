@@ -50,3 +50,11 @@
 .predictionLabel .modelVoteCount { pointer-events: auto; cursor: help; flex: 0 0 auto; }
 .modelVoteTooltip { position: fixed; z-index: 100; pointer-events: none; max-width: calc(100vw - 8px); padding: 6px 9px; border-radius: 5px; background: #24182d; color: white; font: 12px/1.5 system-ui, sans-serif; }
 .privacyLabel.offscreen .modelVoteCount::after { content: none; }
+
+.imageItem .suggestionCounts{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}
+.imageItem .suggestionCounts:empty{display:none}
+.suggestionCount{border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600}
+.suggestionCount.privacy{color:#83276d;background:#f9e3f4}
+.suggestionCount.annotation{color:#17548a;background:#e0eefc}
+
+.detectorSettings>summary{cursor:pointer;font-weight:600;padding:4px 0}

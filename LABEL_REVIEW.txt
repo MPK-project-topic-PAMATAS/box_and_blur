@@ -108,3 +108,11 @@ Background inference runs one job at a time with a cooldown and pauses at
 70% measured CPU, RAM, GPU utilization or GPU memory use. If GPU telemetry is
 unavailable, foreground prediction remains available. A model call already
 running can finish before a current-image request and may briefly spike usage.
+
+Hover over the model count on a blur suggestion for one second to see
+which detectors contributed. You can also Tab to the model count.
+
+The readable-plate filter uses EasyOCR on proposed plate crops only. On first
+use it downloads recognition models as needed. It stores only a readability
+flag in the prediction cache. Turn off Hide plates with no readable characters
+to inspect suggestions that OCR missed.

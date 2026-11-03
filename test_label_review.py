@@ -161,7 +161,7 @@ class LabelReviewTests(unittest.TestCase):
         self.assertEqual(result['boxes']['center_grid'][2][2], 1)
         self.assertEqual(result['groups_in_multiple_splits']['route_id'], {'R1': ['train', 'validation']})
 
-    def test_prediction_cache_persists_and_defers_background_under_load(self):
+    def test_prediction_cache_persists_and_prioritizes_waiting_foreground(self):
         from label_review_prediction_cache import PredictionCache
         from types import SimpleNamespace
 
@@ -172,13 +172,16 @@ class LabelReviewTests(unittest.TestCase):
         detector = SimpleNamespace(predict=predict)
         payload = {'id': '0', 'background': True}
         cache = PredictionCache()
-        with patch('label_review_prediction_cache.system_has_headroom', return_value=False):
-            self.assertEqual(cache.run(dataset, entry, 'privacy', payload, detector, lr.atomic, lr.inside),
-                             {'deferred': True})
+        cache_only = {**payload, 'cache_only': True}
+        self.assertIsNone(cache.run(dataset, entry, 'privacy', cache_only, detector, lr.atomic, lr.inside))
         predict.assert_not_called()
-        with patch('label_review_prediction_cache.system_has_headroom', return_value=True):
-            cache.run(dataset, entry, 'privacy', payload, detector, lr.atomic, lr.inside)
-        cached = PredictionCache().run(dataset, entry, 'privacy', {'id': '0'}, detector, lr.atomic, lr.inside)
+        cache.waiting = 1
+        self.assertEqual(cache.run(dataset, entry, 'privacy', payload, detector, lr.atomic, lr.inside),
+                         {'deferred': True, 'reason': 'Waiting for inference capacity'})
+        predict.assert_not_called()
+        cache.waiting = 0
+        cache.run(dataset, entry, 'privacy', payload, detector, lr.atomic, lr.inside)
+        cached = PredictionCache().run(dataset, entry, 'privacy', cache_only, detector, lr.atomic, lr.inside)
         self.assertTrue(cached['cached'])
         self.assertEqual(predict.call_count, 1)
         self.assertEqual(len(list((self.root / 'prediction_cache/privacy').glob('*.json'))), 1)

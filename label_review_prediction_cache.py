@@ -1,11 +1,8 @@
 """Persistent prediction cache and cooperative inference scheduling."""
 import hashlib
 import json
-import os
-import subprocess
 from pathlib import Path
 from threading import Condition
-from time import monotonic
 from types import SimpleNamespace
 
 from label_review_preannotation import DEFAULT_WEIGHTS
@@ -13,7 +10,6 @@ from label_review_privacy import MODELS
 
 
 CACHE_FOLDER = 'prediction_cache'
-LOAD_LIMIT = 70
 
 
 def file_state(path):
@@ -24,33 +20,11 @@ def file_state(path):
         return None
 
 
-def system_has_headroom():
-    try:
-        import psutil
-    except ImportError:
-        return False
-    if psutil.cpu_percent(interval=.12) >= LOAD_LIMIT or psutil.virtual_memory().percent >= LOAD_LIMIT:
-        return False
-    if os.environ.get('BOX_AND_BLUR_COMPUTE') == 'cpu':
-        return True
-    try:
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, check=True, timeout=2,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        gpu, used, total = map(float, result.stdout.splitlines()[0].split(','))
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-        # Without reliable GPU telemetry, leave inference to foreground requests.
-        return False
-    return gpu < LOAD_LIMIT and total > 0 and 100 * used / total < LOAD_LIMIT
-
-
 class PredictionCache:
     def __init__(self):
         self.condition = Condition()
         self.running = False
         self.waiting = 0
-        self.next_background = 0
 
     def run(self, dataset, entry, kind, payload, detector, atomic, inside):
         background = payload.get('background') is True
@@ -65,11 +39,11 @@ class PredictionCache:
         else:
             model_state = [[name, file_state(MODELS / name)] for name in
                            ('dashcam.pt', 'yunet.onnx', 'plates.onnx', 'plates_s.onnx',
-                            'face_ssd.prototxt', 'face_ssd.caffemodel')]
+                            'face_ssd.prototxt', 'face_ssd.caffemodel', 'context.pt', 'heads.pt')]
         categories = [dict(category) for category in dataset.categories]
         removed = set(dataset.removed_classes)
         relative = image.relative_to(dataset.root).as_posix()
-        fingerprint = json.dumps([1, relative, original, kind, options, model_state,
+        fingerprint = json.dumps([4 if kind == 'privacy' else 1, relative, original, kind, options, model_state,
                                   categories if kind == 'road' else None,
                                   sorted(removed) if kind == 'road' else None], sort_keys=True)
         digest = hashlib.sha256(fingerprint.encode()).hexdigest()
@@ -84,16 +58,12 @@ class PredictionCache:
         cached = read_cache()
         if cached is not None:
             return {**cached, 'cached': True}
-        if background:
-            with self.condition:
-                if self.running or self.waiting or monotonic() < self.next_background:
-                    return {'deferred': True}
-            if not system_has_headroom():
-                return {'deferred': True}
+        if payload.get('cache_only') is True:
+            return None
         with self.condition:
             if background:
-                if self.running or self.waiting or monotonic() < self.next_background:
-                    return {'deferred': True}
+                if self.running or self.waiting:
+                    return {'deferred': True, 'reason': 'Waiting for inference capacity'}
             else:
                 self.waiting += 1
                 try:
@@ -101,7 +71,6 @@ class PredictionCache:
                 finally:
                     self.waiting -= 1
             self.running = True
-        started = monotonic()
         try:
             cached = read_cache()
             if cached is not None:
@@ -120,7 +89,5 @@ class PredictionCache:
             return result
         finally:
             with self.condition:
-                if background:
-                    self.next_background = monotonic() + max(.15, (monotonic() - started) * 3 / 7)
                 self.running = False
                 self.condition.notify_all()

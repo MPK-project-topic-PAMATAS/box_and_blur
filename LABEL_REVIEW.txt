@@ -1,0 +1,110 @@
+BOX & BLUR USER GUIDE
+
+Start the app using the launcher in README.md.
+
+Supported detection layouts:
+  dataset/train/images + dataset/train/labels (valid/test likewise)
+  dataset/images/train + dataset/labels/train (valid/test likewise)
+  dataset/keep_together_*/images/sequence_* + mirrored labels/sequence_*
+  dataset/images + dataset/labels, or images with same-folder .txt labels
+  COCO dataset/train.json + train/images, or annotations/instances_*.json
+  COCO images and JSON may also be together or in a Roboflow-style split folder.
+The chooser accepts a dataset root or one split. Missing/ambiguous COCO image
+references are reported rather than linked by a nonunique basename.
+
+HRP4K ships YOLO and COCO. Auto mode displays YOLO when present, with a warning
+if it differs from COCO. Choose COCO when opening to use its boxes as the source.
+Saving updates both linked formats. Categories and unrelated COCO metadata are
+retained. YOLO class indices map to the ordered COCO categories, or YAML names
+when these match. Inconsistent category dictionaries are rejected.
+
+REVIEW
+Search images, paths, label names, class names and COCO annotation IDs.
+Filter by class, reviewed/not reviewed, empty annotations, or missing labels.
+B: draw box. V: select, drag to move, drag handles to resize.
+Use the right panel to change the class or precise coordinates. Delete: remove.
+G: draw a Gaussian-blur region. Adjust strength before drawing the next region.
+Preview Gaussian blur renders the actual filter. Save applies it to image pixels.
+Remove a pending blur with its x button; undo/redo also works before saving.
+Wheel: zoom. Space+drag or Pan: move around. Fit / 1:1: reset viewing scale.
+Ctrl+S saves edits. Enter saves any edits, marks the image reviewed, and advances.
+Left/right: previous/next image in the current search/filter.
+Unreviewed navigation skips completed images. Ctrl+Z/Ctrl+Y: undo/redo.
+An empty .txt is a valid negative, not a missing annotation. Save with no boxes
+creates an empty label (and removes that image's COCO boxes if linked).
+Blur regions are privacy edits, not object annotations. No automatic detection
+of faces or plates is performed.
+
+BACKUPS AND SAFETY
+Nothing in a selected dataset is changed until Save is pressed.
+All filenames, image dimensions and split/street folders stay unchanged.
+Each save backs up the original label/COCO file and, for blur, image pixels under
+  .label_review/<dataset-id>/backups/<timestamp>/
+A receipt lists the changed files and backup locations. Review progress is in
+  .label_review/<dataset-id>/progress.json
+To restore: stop the tool, read the receipt, and copy the desired backup files
+to their listed original paths. Restore all files in a receipt together.
+Blur saves remove embedded image metadata and re-encode the image at its original
+dimensions. JPEG is saved at quality 97. Labels-only saves leave image bytes alone.
+Do not run two editor instances on the same dataset. The tool detects external
+file changes and refuses stale saves; reopen the dataset to refresh shared JSON.
+YOLO polygons/pose and EXIF-rotated images are read-only. COCO segmentation/pose
+is protected against incompatible box edits. This is a bounding-box editor.
+Only the local computer can connect to the server (127.0.0.1).
+
+DATASET STATISTICS
+Open a dataset and click Dataset statistics to view its saved report.
+Calculate statistics creates dataset_statistics.json in the dataset root.
+Recalculate statistics refreshes it from saved annotations, ignoring image filters. Download CSV for the tables
+or JSON for all values, including the normalized box-center grids.
+
+For capture and split information, optionally place dataset_metadata.csv in
+the dataset root. Use one row per image with relative_path matching its path
+from the dataset root, such as train/images/123.jpg. Optional columns:
+city, region, country, pavement, weather, lighting, camera, vehicle,
+camera_height_m, camera_pitch_deg, focal_length_mm, frame_rate_fps,
+route_id, sequence_id, split.
+Record camera pitch relative to the local road plane with downward pitch
+positive. Unrecorded values are counted as Unknown. Use consistent route and
+sequence IDs across splits to check for shared groups.
+
+EDITING REGIONS
+Select an annotation or blur region on the canvas or in its list. Drag its
+frame to move it, or a handle to resize it. After drawing a region, the tool
+selects it automatically. B and G start another annotation or blur region.
+Undo and redo step through individual edits. Discard changes resets the
+current image to its last saved annotations and clears pending blur regions.
+
+MODEL PREANNOTATION
+Enable automatic preannotation and select one or more suggestion classes. Use the local detector checkpoint configured as described in README.md. In Model settings, select
+another trusted local Ultralytics-compatible detection checkpoint or change
+minimum confidence. Inference runs one image at a time at 640 px, using CUDA
+when available. Dashed blue boxes are model suggestions with confidence scores.
+Accept a suggestion to make it an editable box, or dismiss it. Add the dataset class before accepting an unmatched suggestion.
+The overlap filter hides suggestions covering more than 70% of any current box.
+Accepted suggestions can be undone like other edits and persist only on Save.
+
+PRIVACY SUGGESTIONS
+In Privacy blur, enable automatic face and plate suggestions. The ensemble
+uses Dashcam YOLOv8, OpenCV YuNet and OpenCV SSD for faces, and Dashcam
+YOLOv8 and two specialized YOLOv9 checkpoints for plates. Weights live
+under models/privacy by default. Inference uses local image files.
+Adjust road-detector confidence in Model and confidence settings. Set each
+privacy detector threshold separately. All surviving detections are shown.
+Overlapping detections of the same type are merged and padded for coverage.
+Weaker single-model detections appear in pale pink.
+Accept one suggestion with its checkmark or all shown with Shift+G. Preview
+or resize the pending regions and press Enter to save and advance. Undo
+removes a bulk acceptance as one step. Check for missed faces and plates.
+
+BACKGROUND PREDICTIONS
+With either automatic detector enabled, the review page queues later images
+in the current filtered view while the tab is visible. Current-image requests
+have priority. Predictions are saved as JSON under prediction_cache/road and
+prediction_cache/privacy in the dataset folder, before you accept anything.
+The cache is reused across restarts and invalidated by image, model, or settings
+changes. It can be deleted to force recalculation.
+Background inference runs one job at a time with a cooldown and pauses at
+70% measured CPU, RAM, GPU utilization or GPU memory use. If GPU telemetry is
+unavailable, foreground prediction remains available. A model call already
+running can finish before a current-image request and may briefly spike usage.

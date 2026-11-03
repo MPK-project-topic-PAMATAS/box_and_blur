@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Box &amp; Blur</title><link rel="stylesheet" href="/styles.css"></head>
+<body>
+<header><div class="brand"><span class="brandmark">▣</span><div>Box &amp; Blur<small>Object Detector Dataset Review Annotation Anonymization Tool</small></div></div><div id="datasetName">Choose a dataset to begin</div><button id="openFolder">Open dataset</button><button id="manageClasses" disabled>Manage classes</button><button id="datasetStatistics" disabled>Dataset statistics</button><button id="helpButton" class="quiet">? Help</button></header>
+<main>
+<aside class="library"><div class="sectionTitle">Image library <span id="totalCount" class="pill">0</span></div><input id="search" placeholder="Search image, label, class or annotation ID…" aria-label="Search images and annotations"><div class="filters"><select id="statusFilter" aria-label="Review filter"><option value="all">All images</option><option value="unreviewed">Not reviewed</option><option value="reviewed">Reviewed</option><option value="empty">No boxes</option><option value="missing">Missing label</option><option value="error">Needs attention</option></select><select id="classFilter" aria-label="Class filter"><option value="">All classes</option></select></div><div class="progress"><div><i id="progressBar"></i></div><span id="reviewCount">0 reviewed</span><span id="matchCount"></span></div><div id="imageList"><div class="emptyLibrary">Open your dataset folder.<br><br>YOLO · COCO · HRP4K<br>Nested street folders supported.</div></div><div class="paging"><button id="pagePrev" class="quiet">←</button><span id="pageInfo">0 images</span><button id="pageNext" class="quiet">→</button></div></aside>
+<section class="workspace"><div class="toolbar"><div class="tools"><button data-tool="select" class="active" title="Select / move / resize (V)">↖ Select</button><button data-tool="box" title="Draw annotation (B)">▭ Box</button><button data-tool="blur" title="Draw Gaussian blur region (G)">▧ Blur</button><button data-tool="pan" title="Pan (Space + drag)">✥ Pan</button></div><div class="imageHeader"><div><strong id="imageName">Your images, clearly annotated.</strong><small id="imagePath">Choose a dataset, review boxes, and save when ready.</small></div><span id="saveState" class="pill">Ready</span></div><div class="zoomtools"><button id="undo" title="Undo (Ctrl+Z)">↶</button><button id="redo" title="Redo (Ctrl+Y)">↷</button><span class="separator"></span><button id="zoomOut">−</button><button id="fit">Fit</button><button id="actual">1:1</button><button id="zoomIn">+</button><span id="zoomValue">100%</span><button id="toggleBoxes" title="Show / hide annotations (H)">◉ Boxes</button></div></div><div id="notice" hidden></div><div id="canvasWrap"><div id="predictionLabels"></div><canvas id="canvas" tabindex="0" aria-label="Annotation image canvas"></canvas><div id="welcome"><div class="welcomeIcon">▧</div><h1>A closer look.<br>A better dataset.</h1><p>Inspect every frame. Refine every box.<br>Keep sensitive details private.</p><button id="welcomeOpen">Choose dataset folder</button></div><div id="loading" hidden>Loading image…</div></div><footer><button id="previous">← Previous</button><button id="previousUnmade" class="quiet" title="Previous image not yet reviewed">← Unreviewed</button><div><span id="position">No image selected</span><br><small id="footerReviewCount" aria-live="polite">0 reviewed</small><small id="prefetchStatus" role="status" hidden></small></div><button id="nextUnmade" class="quiet" title="Next image not yet reviewed">Unreviewed →</button><button id="next">Next →</button></footer></section>
+<aside class="inspector"><div class="sectionTitle">Annotations <span id="boxCount" class="pill">0</span></div><div class="field"><label for="drawClass">Class for new boxes</label><select id="drawClass"></select></div><div class="hint">Draw with <kbd>B</kbd>. Select a box to move it or drag its handles to resize.</div><div id="annotationList"></div><div id="boxEditor" hidden><div class="sectionTitle">Selected box</div><label>Class<select id="editClass"></select></label><div class="coordinates"><label>X<input id="coordX" type="number" step="1"></label><label>Y<input id="coordY" type="number" step="1"></label><label>Width<input id="coordW" type="number" min="1" step="1"></label><label>Height<input id="coordH" type="number" min="1" step="1"></label></div><button id="applyCoordinates" class="wide">Apply coordinates</button><button id="deleteBox" class="danger wide">Delete selected box</button></div><section class="predictionSection">
+<div class="sectionTitle">Model suggestions <span id="predictionCount" class="pill">0</span></div>
+<label class="predictionToggle"><input id="autoPreannotation" type="checkbox"> Automatically run preannotation</label>
+<details><summary>Model and confidence settings</summary>
+<label>Local YOLO checkpoint (.pt)<input id="preannotationWeights"></label>
+<label>Minimum confidence (%)<input id="preannotationConfidence" type="number" min="1" max="99" value="25"></label>
+</details>
+<fieldset id="predictionFilters">
+<legend>Show suggestions for</legend>
+<label><input type="checkbox" value="pothole" checked> Potholes</label>
+<label><input type="checkbox" value="manhole" checked> Manholes</label>
+<label><input type="checkbox" value="speedbump" checked> Speed bumps</label>
+<label><input type="checkbox" value="other" checked> Other</label>
+</fieldset>
+<label class="predictionToggle"><input id="suppressOverlappingPredictions" type="checkbox" checked> Hide suggestions covering more than 70% of an existing box</label>
+<p id="predictionStatus" class="hint" role="status">Dashed blue boxes are suggestions. Accept a box to edit or save it.</p>
+<div id="predictionList"></div>
+</section>
+<div class="blurSection"><div class="sectionTitle">Privacy blur <span id="blurCount" class="pill">0</span></div><p class="hint">Draw a region with <kbd>G</kbd> over a plate, face or other detail. Blur regions are not detection labels.</p><label>Gaussian strength <span id="radiusValue">18 px</span><input id="blurRadius" type="range" min="2" max="100" value="18"></label><div id="blurList"></div>
+<section class="privacySuggestions">
+<label class="predictionToggle"><input id="autoPrivacy" type="checkbox"> Automatically suggest face and plate blur</label>
+<div id="privacyTypes">
+<label class="predictionToggle"><input type="checkbox" value="face" checked> Faces</label>
+<label class="predictionToggle"><input type="checkbox" value="plate" checked> License plates</label>
+</div>
+<details id="privacySettings"><summary>Privacy detector thresholds</summary>
+<label>Dashcam YOLOv8 (%)<input id="dashcamConfidence" type="number" min="1" max="99" value="15"></label>
+<label>YuNet faces (%)<input id="faceConfidence" type="number" min="1" max="99" value="50"></label>
+<label>YOLOv9 plates (%)<input id="plateConfidence" type="number" min="1" max="99" value="25"></label>
+<label>OpenCV SSD faces (%)<input id="ssdFaceConfidence" type="number" min="1" max="99" value="35"></label>
+<label>YOLOv9-s plates (%)<input id="plateSConfidence" type="number" min="1" max="99" value="25"></label>
+<p class="hint">Pale pink marks weaker single-model suggestions.</p>
+</details>
+<p id="privacyStatus" class="hint" role="status"></p>
+<button id="acceptPrivacyAll" type="button" class="wide" disabled>Accept all shown blur suggestions <kbd>Shift G</kbd></button>
+<div id="privacyList"></div>
+</section><button id="previewBlur" class="wide">Preview Gaussian blur</button><p id="blurHint" class="hint">Saved blur changes the image pixels. An original copy is backed up first.</p></div><div class="savePanel"><div id="formatInfo" class="hint">Original filenames are preserved.</div><button id="discardChanges" class="danger wide" disabled>Discard changes</button><button id="save" class="wide">Save edits <kbd>Ctrl S</kbd></button><button id="saveNext" class="primary wide">Review & next <kbd>Enter</kbd></button><div id="backupInfo" class="hint"></div></div></aside>
+</main>
+<div id="toast" role="status" hidden></div>
+<dialog id="folderDialog"><form method="dialog"><button class="close quiet" aria-label="Close">✕</button></form><h2>Open a dataset</h2><p>Choose the folder containing your images and annotation files.</p><label>Dataset folder<div class="pathRow"><input id="folderPath" placeholder="Dataset folder path"><button id="browseFolder">Browse…</button></div></label><div id="browser" hidden><div class="pathRow"><button id="browseUp">↑ Up</button><span id="browsePath"></span></div><div id="folderList"></div><button id="useFolder" class="wide">Use this folder</button></div><label>Annotation source<select id="formatMode"><option value="auto">Auto-detect (prefer YOLO when both exist)</option><option value="yolo">YOLO detection labels (.txt)</option><option value="coco">COCO detection annotations (.json)</option></select></label><p class="hint">Supports split/images + labels, images/split + labels/split, nested street folders, and COCO JSON with linked images. When both formats exist, saving keeps them synchronized.</p><div id="suggestions"></div><div id="openError" class="error"></div><button id="loadDataset" class="primary wide">Open dataset</button></dialog>
+<dialog id="helpDialog"><form method="dialog"><button class="close quiet">✕</button></form><h2>A quick guide</h2><ol><li>Open a dataset folder. Search by full or partial image filename, label path, class, or COCO annotation ID.</li><li>Use <b>B</b> to draw a box. Use <b>V</b> to select, move and resize boxes. Change classes in the right panel. <b>Delete</b> removes the selected box.</li><li>Use the wheel to zoom around the pointer. Hold <b>Space</b> and drag to pan. <b>Fit</b> shows the whole frame; <b>1:1</b> shows original pixel scale.</li><li>Use <b>G</b> to draw blur regions, choose a strength, then preview. Blur only changes pixels when saved.</li><li><b>Ctrl+S</b> saves. <b>Enter</b> saves any edits, marks the image reviewed, and advances. <b>← / →</b> navigate. Unreviewed buttons skip finished images. <b>Ctrl+Z / Ctrl+Y</b> undo / redo unsaved edits.</li></ol><p>Empty labels are valid negatives. Saving an image with no boxes creates or preserves an empty YOLO label and removes its COCO boxes.</p><p>Each save backs up changed originals and records a receipt under the tool's <code>.label_review</code> folder. Full filenames, image dimensions, splits and unrelated COCO metadata are preserved. Files edited elsewhere must be reloaded before saving.</p><p>Detection bounding boxes are supported. Polygon and pose annotations are protected against incompatible box-only edits. Blur is manual Gaussian filtering; inspect your chosen strength before sharing images.</p><button id="doneHelp" class="primary wide">Got it</button></dialog>
+<dialog id="classDialog">
+<form id="classForm">
+<h2>Manage classes</h2>
+<label>Class<select id="classAction"></select></label>
+<label>Name<input id="className" required maxlength="100"></label>
+<p class="hint">Existing annotations keep their class IDs.</p>
+<p id="classError" role="alert"></p>
+<button id="closeClasses" type="button">Close</button>
+<button id="startRemoveClass" class="danger" type="button" hidden>Remove class…</button>
+<div id="removeClassPanel" hidden>
+<label>Existing annotations
+<select id="removeClassHandling">
+<option value="keep">Remove only if the class is unused</option>
+<option value="reassign">Reassign all annotations to another class</option>
+<option value="delete">Delete all annotations in this class</option>
+</select></label>
+<label id="removeClassTargetLabel" hidden>Destination class<select id="removeClassTarget"></select></label>
+<p>Type the exact phrase below to apply this change across the open dataset. A backup is created first.</p>
+<p><code id="removeClassPhrase"></code></p>
+<label>Confirmation phrase<input id="removeClassConfirmation" autocomplete="off" spellcheck="false" disabled required></label>
+</div>
+<button id="saveClass" class="primary" type="submit">Save class</button>
+</form>
+</dialog>
+<dialog id="statisticsDialog">
+<form method="dialog"><button class="close quiet" aria-label="Close statistics">✕</button></form>
+<h2>Dataset statistics</h2>
+<p id="statisticsStatus" role="status"></p>
+<button id="recalculateStatistics" type="button">Calculate statistics</button>
+<p id="statisticsError" role="alert"></p>
+<div id="statisticsExports" hidden>
+<button id="statisticsJson">Download JSON</button>
+<button id="statisticsCsv">Download CSV tables</button>
+</div>
+<div id="statisticsResults"></div>
+</dialog>
+<script src="/app.js"></script></body></html>

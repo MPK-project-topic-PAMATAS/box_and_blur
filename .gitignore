@@ -1,0 +1,17 @@
+.venv*/
+.label_review/
+.box_and_blur_local.json
+prediction_cache/
+dataset_statistics.json
+label_review_classes.json
+models/
+__pycache__/
+*.py[cod]
+*.pt
+*.pth
+*.onnx
+*.caffemodel
+*.prototxt
+*.engine
+*.safetensors
+.DS_Store

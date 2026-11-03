@@ -1,0 +1,10 @@
+Pillow==13.0.0
+numpy>=1.26,<3
+torch==2.7.1
+torchvision==0.22.1
+ultralytics==8.3.253
+opencv-python==4.14.0.94
+opencv-python-headless==4.14.0.94
+open-image-models[onnx]==0.6.0
+dill>=0.3.8,<0.5
+psutil>=5.8,<8

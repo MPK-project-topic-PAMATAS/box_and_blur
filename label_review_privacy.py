@@ -1,5 +1,6 @@
 """Local face and plate proposals from complementary detectors."""
 import math
+import re
 import os
 from pathlib import Path
 from time import perf_counter
@@ -26,6 +27,7 @@ def merge_regions(detections, width, height, thresholds):
         rect = [max(0, x1), max(0, y1), min(width, x2), min(height, y2)]
         if rect[0] >= rect[2] or rect[1] >= rect[3]:
             continue
+        geometry_rank = (source in {'YOLOv9 plate', 'YOLOv9-s plate'}, score)
         sources = {source}
         strong = score >= min(.95, thresholds[source] + .15)
         for previous in merged[:]:
@@ -36,25 +38,70 @@ def merge_regions(detections, width, height, thresholds):
             overlap = max(0, min(c, right)-max(a, x)) * max(0, min(d, bottom)-max(b, y))
             if overlap < .55 * min((c-a)*(d-b), (right-x)*(bottom-y)):
                 continue
-            rect = [min(a, x), min(b, y), max(c, right), max(d, bottom)]
+            if kind != 'plate':
+                rect = [min(a, x), min(b, y), max(c, right), max(d, bottom)]
+            elif previous['geometry_rank'] > geometry_rank:
+                rect = previous['rect']
+                geometry_rank = previous['geometry_rank']
             sources.update(previous['sources'])
             strong = strong or previous['strong']
             score = max(score, previous['confidence'])
             merged.remove(previous)
-        merged.append(dict(kind=kind, rect=rect, confidence=score, sources=sorted(sources), strong=strong))
+        merged.append(dict(kind=kind, rect=rect, confidence=score, sources=sorted(sources),
+                           strong=strong, geometry_rank=geometry_rank))
     regions = []
     for region in merged:
         strong = region.pop('strong')
+        region.pop('geometry_rank')
         region['weak'] = len(region['sources']) == 1 and not strong
         x, y, right, bottom = region.pop('rect')
-        pad_x = max(2, (right-x)*.12)
-        pad_y = max(2, (bottom-y)*.12)
+        fraction, minimum = (.04, 1) if region['kind'] == 'plate' else (.12, 2)
+        pad_x = max(minimum, (right-x)*fraction)
+        pad_y = max(minimum, (bottom-y)*fraction)
         left, top = max(0, math.floor(x-pad_x)), max(0, math.floor(y-pad_y))
         w = min(width, math.ceil(right+pad_x)) - left
         h = min(height, math.ceil(bottom+pad_y)) - top
         region.update(bbox=[left, top, w, h], radius=min(150, max(18, round(min(w,h)*.35))))
         regions.append(region)
     return regions
+
+
+def refine_plate_box(pixels, bbox):
+    """Tighten a plate proposal only when its crop contains a clear outline."""
+    import cv2
+
+    x, y, w, h = bbox
+    if w < 24 or h < 12:
+        return bbox
+    gray = cv2.cvtColor(pixels[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 40, 120)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    for contour in contours:
+        perimeter = cv2.arcLength(contour, True)
+        polygon = cv2.approxPolyDP(contour, .025 * perimeter, True)
+        if len(polygon) != 4 or not cv2.isContourConvex(polygon):
+            continue
+        area = cv2.contourArea(polygon)
+        left, top, width, height = cv2.boundingRect(polygon)
+        if (area < .5*w*h or area < .65*width*height
+                or not 1.15 <= width/height <= 7
+                or abs(left + width/2 - w/2) > .12*w
+                or abs(top + height/2 - h/2) > .12*h):
+            continue
+        candidates.append((area, left, top, width, height))
+    if not candidates:
+        return bbox
+    _, left, top, width, height = max(candidates)
+    pad_x, pad_y = max(1, math.ceil(.04*width)), max(1, math.ceil(.04*height))
+    right = min(w, left + width + pad_x)
+    bottom = min(h, top + height + pad_y)
+    left, top = max(0, left-pad_x), max(0, top-pad_y)
+    if (right-left)*(bottom-top) > .92*w*h:
+        return bbox
+    return [x+left, y+top, right-left, bottom-top]
 
 
 def has_mosaic_grid(pixels, bbox):
@@ -108,12 +155,52 @@ def plate_looks_pixelated(pixels, bbox):
     return False
 
 
+def looks_like_printed_registration(text):
+    compact = re.sub(r'[\s.-]+', '', text.upper())
+    return (re.fullmatch(r'[A-ZА-ЯЁ0-9]{4,12}', compact) is not None
+            and sum(ch.isdigit() for ch in compact) >= 2
+            and any(ch.isalpha() for ch in compact))
+
+
 class PlateTextReader:
     """Recognize plate text locally and return only a readability flag."""
     profiles = (('en',), ('ru', 'en'), ('ch_sim', 'en'), ('ja', 'en'), ('ko', 'en'))
 
     def __init__(self):
         self.readers = {}
+
+    def printed_regions(self, pixels, vehicle_boxes, physical_plates):
+        import cv2
+        import easyocr
+
+        profile = ('ru', 'en', 'text_detection')
+        if profile not in self.readers:
+            self.readers[profile] = easyocr.Reader(['ru', 'en'], gpu=False, verbose=False)
+        regions = []
+        for x1, y1, x2, y2 in vehicle_boxes:
+            x, y = max(0, math.floor(x1)), max(0, math.floor(y1))
+            crop = pixels[y:math.ceil(y2), x:math.ceil(x2)]
+            height, width = crop.shape[:2]
+            if width < 32 or height < 24:
+                continue
+            scale = min(2, 768 / max(width, height))
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (round(width*scale), round(height*scale)))
+            for corners, text, score in self.readers[profile].readtext(gray, detail=1, workers=0):
+                if score < .35 or not looks_like_printed_registration(text):
+                    continue
+                xs, ys = zip(*corners)
+                left = max(x, x + math.floor(min(xs)/scale) - 2)
+                top = max(y, y + math.floor(min(ys)/scale) - 2)
+                right = min(x+width, x + math.ceil(max(xs)/scale) + 2)
+                bottom = min(y+height, y + math.ceil(max(ys)/scale) + 2)
+                bbox = [left, top, right-left, bottom-top]
+                if min(bbox[2:]) <= 0 or supported_by(bbox, physical_plates):
+                    continue
+                regions.append(dict(kind='plate', bbox=bbox, confidence=float(score), weak=True,
+                                    sources=['Printed registration OCR'], radius=18,
+                                    vehicle_context=True, printed_registration=True))
+        return regions
 
     def readable(self, pixels, bbox):
         import cv2
@@ -309,12 +396,17 @@ class PrivacyDetector:
         has_faces = any(region['kind'] == 'face' for region in regions)
         has_plates = any(region['kind'] == 'plate' for region in regions)
         people = vehicles = heads = None
-        if regions:
-            classes = ([0] if has_faces else []) + ([2, 3, 5, 7] if has_plates else [])
+        printed_enabled = payload.get('detect_printed_plates') is True
+        heavy_vehicles = []
+        if regions or printed_enabled:
+            classes = ([0] if has_faces else []) + (
+                [2, 3, 5, 7] if has_plates else [5, 7] if printed_enabled else [])
             try:
                 context = self.context_boxes(image, 'context.pt', classes)
                 people = [box for class_id, box in context if class_id == 0]
                 vehicles = [box for class_id, box in context if class_id != 0]
+                if printed_enabled:
+                    heavy_vehicles = [box for class_id, box in context if class_id in (5, 7)]
             except Exception as error:
                 warnings.append(f'Person/vehicle context unavailable: {error}')
         if has_faces:
@@ -334,6 +426,8 @@ class PrivacyDetector:
                         warnings.append(f'Face crop verification unavailable: {error}')
                         feature_check_available = False
                 continue
+            if payload.get('refine_plate_edges') is True:
+                region['bbox'] = refine_plate_box(bgr, region['bbox'])
             if vehicles is not None:
                 region['vehicle_context'] = supported_by(region['bbox'], vehicles)
                 if not region['vehicle_context']:
@@ -346,6 +440,13 @@ class PrivacyDetector:
                 except Exception as error:
                     warnings.append(f'Plate OCR unavailable: {error}')
                     ocr_available = False
+        if heavy_vehicles:
+            physical_plates = [(x, y, x+w, y+h) for x, y, w, h in
+                               (region['bbox'] for region in regions if region['kind'] == 'plate')]
+            try:
+                regions.extend(self.plate_text_reader.printed_regions(bgr, heavy_vehicles, physical_plates))
+            except Exception as error:
+                warnings.append(f'Printed registration OCR unavailable: {error}')
         return {'regions': sorted(regions, key=lambda region: -region['confidence']),
                 'detectors': completed,
                 'warnings': warnings, 'seconds': round(perf_counter()-started, 2)}

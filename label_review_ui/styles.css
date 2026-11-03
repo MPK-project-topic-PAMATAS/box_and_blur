@@ -27,7 +27,7 @@
 #predictionFilters label { display: inline-flex; align-items: center; gap: 3px; margin: 2px 7px 2px 0; }
 #predictionFilters input { width: auto; margin: 0; }
 #predictionLabels { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
-.predictionLabel { position: absolute; display: flex; align-items: center; gap: 5px; max-width: calc(100% - 8px); padding: 2px 6px 2px 2px; background: #082c3b; border: 1px solid #55d6ff; border-radius: 4px; color: #dbf7ff; font-size: 12px; white-space: nowrap; }
+.predictionLabel { opacity: 0.7; position: absolute; display: flex; align-items: center; gap: 5px; max-width: calc(100% - 8px); padding: 2px 6px 2px 2px; background: #082c3b; border: 1px solid #55d6ff; border-radius: 4px; color: #dbf7ff; font-size: 12px; white-space: nowrap; }
 .predictionLabel span { overflow: hidden; text-overflow: ellipsis; }
 .predictionLabel button { pointer-events: auto; padding: 1px 5px; color: #082c3b; background: #a1eaff; border: 0; }
 .predictionLabel.offscreen { border-style: dashed; }
@@ -62,3 +62,9 @@
 #pageJump{display:flex;align-items:center;gap:4px;white-space:nowrap}
 #pageNumber{width:48px;padding:2px 4px}
 .pageRange{display:block;text-align:center;padding:0 4px 4px;color:var(--muted)}
+
+.paging button{font-size:20px;line-height:1;min-width:28px}
+.suggestionNavigation{display:flex;gap:8px;padding:0 4px 0 0;text-align:center;overflow-x:auto;min-width:0}
+.suggestionNavigation>div{display:flex;align-items:center;gap:6px;flex:none}
+.suggestionNavigation button{font-size:11px;padding:2px 6px;min-height:0}
+.suggestionNavigation small{color:var(--muted)}

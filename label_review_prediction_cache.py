@@ -31,6 +31,10 @@ class PredictionCache:
         image = entry['path']
         original = file_state(image)
         options = {key: payload[key] for key in ('weights', 'confidence', 'thresholds') if key in payload}
+        if kind == 'privacy' and payload.get('refine_plate_edges') is True:
+            options['refine_plate_edges'] = True
+        if kind == 'privacy' and payload.get('detect_printed_plates') is True:
+            options['detect_printed_plates'] = True
         model_state = []
         if kind == 'road':
             weights = DEFAULT_WEIGHTS if not options.get('weights') else Path(options['weights'])
@@ -43,7 +47,7 @@ class PredictionCache:
         categories = [dict(category) for category in dataset.categories]
         removed = set(dataset.removed_classes)
         relative = image.relative_to(dataset.root).as_posix()
-        fingerprint = json.dumps([4 if kind == 'privacy' else 1, relative, original, kind, options, model_state,
+        fingerprint = json.dumps([5 if kind == 'privacy' else 1, relative, original, kind, options, model_state,
                                   categories if kind == 'road' else None,
                                   sorted(removed) if kind == 'road' else None], sort_keys=True)
         digest = hashlib.sha256(fingerprint.encode()).hexdigest()

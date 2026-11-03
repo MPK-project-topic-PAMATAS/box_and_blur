@@ -16,7 +16,16 @@ function remember(before = snapshot()) {
   undo.push(before);
   redo = [];
 }
-function changed(){dirty=blurs.length>0 || JSON.stringify(boxes)!==JSON.stringify(current.boxes);if(originalPicture)picture=originalPicture;previewSerial++;if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null;}updateSave();inspector();draw();}
+function changed(){
+  dirty=blurs.length>0 || JSON.stringify(boxes)!==JSON.stringify(current.boxes);
+  queuePrivacyPreview(blurs);
+  if (!blurs.length) {
+    if (originalPicture) picture=originalPicture;
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    previewURL=null;
+  }
+  updateSave();inspector();draw();
+}
 function updateSave(){const el=$('saveState');el.textContent=dirty?'Unsaved changes':current?.history?'Reviewed':'Ready to review';el.className='pill '+(dirty?'unsaved':current?.history?'saved':'');$('save').disabled=$('saveNext').disabled=!editable();$('discardChanges').disabled=!editable()||!dirty;$('undo').disabled=!editable()||!undo.length;$('redo').disabled=!editable()||!redo.length;}
 function restoreStack(from,to){if(!editable()||!from.length)return;to.push(snapshot());const state=JSON.parse(from.pop());boxes=state.boxes;blurs=state.blurs;selected=null;selectedBlur=null;changed();}
 function updatePrivacyEffectVisibility() {
@@ -34,7 +43,7 @@ if(resume)load(resume.id,true);
 else savePreferences();}
 function filter(keep=false){if(!data)return;const q=$('search').value.toLowerCase().trim(),status=$('statusFilter').value,cls=$('classFilter').value;filtered=all.filter(e=>{const searchable=[e.name,e.relative,e.annotation,...e.annotation_ids,...e.classes].join(' ').toLowerCase();return(!q||searchable.includes(q))&&(!cls||e.classes.includes(cls))&&(status==='all'||status==='reviewed'&&e.reviewed||status==='unreviewed'&&!e.reviewed||status==='empty'&&!e.count||status==='missing'&&e.missing||status==='error'&&e.error);});if(!keep)page=0;page=Math.min(page,Math.max(0,Math.ceil(filtered.length/LIBRARY_PAGE_SIZE)-1));renderList();progress();navigation();}
 function progress(){const done=all.filter(e=>e.reviewed).length;$('footerReviewCount').textContent=`${done.toLocaleString()} reviewed`;$('reviewCount').textContent=`${done.toLocaleString()} / ${all.length.toLocaleString()} reviewed`;$('progressBar').style.width=100*done/Math.max(1,all.length)+'%';$('matchCount').textContent=filtered.length===all.length?'':`${filtered.length} found`;}
-function renderList(){const list=$('imageList');list.replaceChildren();for(const e of filtered.slice(page*LIBRARY_PAGE_SIZE,page*LIBRARY_PAGE_SIZE+LIBRARY_PAGE_SIZE)){const b=document.createElement('button');b.className='imageItem'+(current?.id===e.id?' selected':'');b.dataset.id=e.id;b.onclick=()=>load(e.id);const img=new Image();img.loading='lazy';img.src=imgURL(e.id,true);img.alt='';const meta=document.createElement('div');meta.className='meta';const title=document.createElement('b');title.textContent=e.name;title.title=e.name;const sub=document.createElement('small');sub.textContent=e.relative.split('/').slice(0,-1).join('/');sub.title=e.relative;const status=document.createElement('small');status.className=e.error||e.missing?'warn':'itemStatus';status.textContent=e.error?'⚠ Label needs attention':`${e.reviewed?'✓ Reviewed · ':''}${e.count} box${e.count===1?'':'es'}${e.missing?' · no label file':''}`;const counts=document.createElement('small');counts.className='suggestionCounts';renderSuggestionCounts(counts,e);meta.append(title,sub,status,counts);b.append(img,meta);list.append(b);}if(!filtered.length){const empty=document.createElement('div');empty.className='emptyLibrary';empty.textContent='No images match this search or filter.';list.append(empty);}$('pageInfo').textContent=filtered.length?`${page*LIBRARY_PAGE_SIZE+1}–${Math.min(filtered.length,page*LIBRARY_PAGE_SIZE+LIBRARY_PAGE_SIZE)} of ${filtered.length}`:'0 results';const totalPages=Math.max(1,Math.ceil(filtered.length/LIBRARY_PAGE_SIZE));$('pageFirst').disabled=$('pagePrev').disabled=page===0;$('pageLast').disabled=$('pageNext').disabled=page+1>=totalPages;$('pageNumber').disabled=!filtered.length;$('pageNumber').max=totalPages;$('pageNumber').value=page+1;$('pageTotal').textContent='/ '+totalPages;}
+function renderList(){const list=$('imageList');list.replaceChildren();for(const e of filtered.slice(page*LIBRARY_PAGE_SIZE,page*LIBRARY_PAGE_SIZE+LIBRARY_PAGE_SIZE)){const b=document.createElement('button');b.className='imageItem'+(current?.id===e.id?' selected':'');b.dataset.id=e.id;b.onclick=()=>load(e.id);const img=new Image();img.loading='lazy';img.src=imgURL(e.id,true);img.alt='';const meta=document.createElement('div');meta.className='meta';const title=document.createElement('b');title.textContent=e.name;title.title=e.name;const sub=document.createElement('small');sub.textContent=e.relative.split('/').slice(0,-1).join('/');sub.title=e.relative;const status=document.createElement('small');status.className=e.error||e.missing?'warn':'itemStatus';status.textContent=e.error?'⚠ Label needs attention':`${e.reviewed?'✓ Reviewed · ':''}${e.count} box${e.count===1?'':'es'}${e.missing?' · no label file':''}`;const counts=document.createElement('small');counts.className='suggestionCounts';renderSuggestionCounts(counts,e);meta.append(title,sub,status,counts);b.append(img,meta);list.append(b);}if(!filtered.length){const empty=document.createElement('div');empty.className='emptyLibrary';empty.textContent='No images match this search or filter.';list.append(empty);}$('pageInfo').textContent=filtered.length?`${page*LIBRARY_PAGE_SIZE+1}–${Math.min(filtered.length,page*LIBRARY_PAGE_SIZE+LIBRARY_PAGE_SIZE)} of ${filtered.length}`:'0 results';const totalPages=Math.max(1,Math.ceil(filtered.length/LIBRARY_PAGE_SIZE));$('pageFirst').disabled=$('pagePrev').disabled=page===0;$('pageLast').disabled=$('pageNext').disabled=page+1>=totalPages;$('pageNumber').disabled=!filtered.length;$('pageNumber').max=totalPages;$('pageNumber').value=page+1;$('pageTotal').textContent='/ '+totalPages;updateSuggestionNavigation();}
 async function load(id,force=false){if(busy&&!force)return;if(dirty&&!force&&!confirm('Discard the unsaved edits on this image? Choose Cancel to save them first.'))return;const serial=++loadSerial;busy=true;updateSave();$('loading').hidden=false;try{const d=await api('/api/image?id='+id);const im=new Image();im.src=`/api/pixels?id=${id}&token=${encodeURIComponent(token)}&v=${d.revision}`;await im.decode();if(serial!==loadSerial)return;current=d;predictions=[];predictionRequest=null;privacySuggestions=[];privacyRequest=null;
 $('predictionStatus').textContent='Dashed blue boxes are suggestions. Accept a box to edit or save it.';
 picture=im;originalPicture=im;boxes=structuredClone(d.boxes);blurs=[];selected=null;selectedBlur=null;drag=null;dirty=false;undo=[];redo=[];if(previewURL)URL.revokeObjectURL(previewURL);previewURL=null;previewSerial++;$('welcome').hidden=true;$('imageName').textContent=d.name;$('imageName').title=d.name;$('imagePath').textContent=`${d.relative} · ${d.width} × ${d.height}`;$('imagePath').title=d.relative;$('formatInfo').textContent=`Source: ${d.format.toUpperCase()} · Save: ${d.saves.join(' + ')}`;$('backupInfo').textContent=d.history?`Last saved ${d.history.saved}`:'';const warnings=[d.error,d.formats_disagree?'YOLO and COCO differ for this image. Saving replaces both with the boxes displayed here.':'',...data.warnings.filter(w=>!w.startsWith('YOLO and COCO'))];$('notice').hidden=!warnings.some(Boolean);$('notice').textContent=warnings.filter(Boolean).join(' ');const index=filtered.findIndex(e=>e.id===id);if(index>=0)page=Math.floor(index/LIBRARY_PAGE_SIZE);renderList();inspector();fit();navigation();canvas.focus({preventScroll:true});savePreferences();}catch(e){toast(e.message,true);}finally{if(serial===loadSerial){busy=false;$('loading').hidden=true;inspector();updateSave();maybePreannotate();maybeSuggestPrivacy();}}}
@@ -101,7 +110,36 @@ function canvasSize(){const r=$('canvasWrap').getBoundingClientRect(),dpr=device
 function fit(){if(!current)return;const r=canvas.getBoundingClientRect();scale=Math.min((r.width-40)/current.width,(r.height-40)/current.height);ox=(r.width-current.width*scale)/2;oy=(r.height-current.height*scale)/2;draw();}
 function zoom(factor,cx=canvas.clientWidth/2,cy=canvas.clientHeight/2){if(!current)return;const next=Math.max(.02,Math.min(12,scale*factor));ox=cx-(cx-ox)*next/scale;oy=cy-(cy-oy)*next/scale;scale=next;draw();}
 function handles(b){const[x,y,w,h]=b.bbox;return [[x,y],[x+w/2,y],[x+w,y],[x+w,y+h/2],[x+w,y+h],[x+w/2,y+h],[x,y+h],[x,y+h/2]];}
-function draw(){const r=canvas.getBoundingClientRect();ctx.clearRect(0,0,r.width,r.height);layoutPredictionLabels(r);if(!current||!picture)return;ctx.save();ctx.translate(ox,oy);ctx.scale(scale,scale);ctx.drawImage(picture,0,0,current.width,current.height);drawPrivacySuggestions();if(visible){drawPredictions();boxes.forEach((b,i)=>{const[x,y,w,h]=b.bbox;ctx.strokeStyle=color(b.category);ctx.fillStyle=color(b.category)+'16';ctx.lineWidth=(selected===i?2.5:1.6)/scale;ctx.fillRect(x,y,w,h);ctx.strokeRect(x,y,w,h);const label=`${i+1} ${category(b.category).name}`;ctx.font=`${12/scale}px Segoe UI`;const tw=ctx.measureText(label).width;const ly=Math.max(0,y-20/scale);ctx.fillStyle=color(b.category);ctx.fillRect(x,ly,tw+10/scale,20/scale);ctx.fillStyle='#102b2c';ctx.fillText(label,x+5/scale,ly+14/scale);if(selected===i) drawHandles(b,color(b.category));});}blurs.forEach((b,i)=>{ctx.strokeStyle='#d59dff';ctx.lineWidth=2/scale;ctx.setLineDash([7/scale,5/scale]);ctx.strokeRect(...b.bbox);ctx.setLineDash([]);ctx.fillStyle='#c483ed33';ctx.fillRect(...b.bbox);ctx.font=`${12/scale}px Segoe UI`;ctx.fillStyle='#e1b7ff';ctx.fillText(`BLUR ${i+1}`,b.bbox[0]+4/scale,b.bbox[1]+16/scale);if(selectedBlur===i) drawHandles(b,'#d59dff');});if(drag?.type==='draw'){ctx.strokeStyle=tool==='blur'?'#ddadff':'#32ecba';ctx.lineWidth=2/scale;ctx.setLineDash([5/scale,3/scale]);const p=drag.now;ctx.strokeRect(drag.start.x,drag.start.y,p.x-drag.start.x,p.y-drag.start.y);}ctx.restore();$('zoomValue').textContent=Math.round(scale*100)+'%';}
+function canvasOverlays() {
+  const area = item => item.bbox[2] * item.bbox[3];
+  const confidence = item => Number.isFinite(item.confidence) ? item.confidence : 1;
+  const manualPrivacy = new Set(blurs);
+  const roadSuggestions = new Set(pendingPredictions());
+  const overlayClass = item => item.kind ? 'privacy:' + item.kind
+    : manualPrivacy.has(item) ? 'privacy:manual'
+    : item.category != null ? 'annotation:' + item.category
+    : 'unmapped:' + item.name.trim().toLowerCase();
+  const candidates = [
+    ...(visible ? [...boxes, ...roadSuggestions] : []),
+    ...blurs, ...pendingPrivacySuggestions(),
+  ].sort((a, b) => confidence(b) - confidence(a) || area(b) - area(a));
+  const shown = new Set();
+  for (const item of candidates) {
+    const [x, y, w, h] = item.bbox;
+    const itemClass = overlayClass(item);
+    const covered = [...shown].some(other => {
+      const competingRoadSuggestions = roadSuggestions.has(item) && roadSuggestions.has(other);
+      if (!competingRoadSuggestions && overlayClass(other) !== itemClass) return false;
+      const [left, top, width, height] = other.bbox;
+      const overlapWidth = Math.max(0, Math.min(x+w, left+width) - Math.max(x, left));
+      const overlapHeight = Math.max(0, Math.min(y+h, top+height) - Math.max(y, top));
+      return overlapWidth * overlapHeight > .8 * Math.min(area(item), area(other));
+    });
+    if (!covered) shown.add(item);
+  }
+  return shown;
+}
+function draw(){const r=canvas.getBoundingClientRect();ctx.clearRect(0,0,r.width,r.height);const shown=current&&picture?canvasOverlays():new Set();const connectors=layoutPredictionLabels(r,shown);if(!current||!picture)return;ctx.save();ctx.translate(ox,oy);ctx.scale(scale,scale);ctx.drawImage(picture,0,0,current.width,current.height);ctx.globalAlpha=1;drawPrivacySuggestions(shown);if(visible){drawPredictions(shown);boxes.forEach((b,i)=>{if(!shown.has(b))return;const[x,y,w,h]=b.bbox;ctx.strokeStyle=color(b.category);ctx.lineWidth=(selected===i?2.5:1.6)/scale;ctx.strokeRect(x,y,w,h);const label=`${i+1} ${category(b.category).name}`;ctx.font=`${12/scale}px Segoe UI`;const ly=y*scale+oy>=20?y-20/scale:y+h;if(ly*scale+oy+20<=r.height){ctx.save();ctx.globalAlpha=.7;ctx.fillStyle='#082c3b';const labelWidth=ctx.measureText(label).width+10/scale;ctx.fillRect(x,ly,labelWidth,20/scale);ctx.strokeStyle=color(b.category);ctx.lineWidth=1/scale;ctx.strokeRect(x,ly,labelWidth,20/scale);ctx.fillStyle='#dbf7ff';ctx.fillText(label,x+5/scale,ly+14/scale);ctx.restore();}if(selected===i) drawHandles(b,color(b.category));});}blurs.forEach((b,i)=>{if(!shown.has(b))return;ctx.strokeStyle='#d59dff';ctx.lineWidth=2/scale;ctx.setLineDash([7/scale,5/scale]);ctx.strokeRect(...b.bbox);ctx.setLineDash([]);if(selectedBlur===i) drawHandles(b,'#d59dff');});if(drag?.type==='draw'){ctx.strokeStyle=tool==='blur'?'#ddadff':'#32ecba';ctx.lineWidth=2/scale;ctx.setLineDash([5/scale,3/scale]);const p=drag.now;ctx.strokeRect(drag.start.x,drag.start.y,p.x-drag.start.x,p.y-drag.start.y);}ctx.restore();drawLabelConnectors(connectors);$('zoomValue').textContent=Math.round(scale*100)+'%';}
 function point(e,clamp=true){const r=canvas.getBoundingClientRect();let x=(e.clientX-r.left-ox)/scale,y=(e.clientY-r.top-oy)/scale;if(clamp&&current){x=Math.max(0,Math.min(current.width,x));y=Math.max(0,Math.min(current.height,y));}return{x,y};}
 let hoverHandle = -1;
 const resizeCursors = ['nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize',
@@ -315,7 +353,46 @@ if(boxes[selected].category===categoryId)return;
 remember();boxes[selected].category=categoryId;changed();};
 function applyCoordinates(){if(!editable()||!boxes[selected])return;const box=['coordX','coordY','coordW','coordH'].map(id=>Number($(id).value));if(box.some(x=>!Number.isFinite(x))||box[0]<0||box[1]<0||box[2]<1||box[3]<1||box[0]+box[2]>current.width||box[1]+box[3]>current.height){toast('Keep the box inside the image.',true);inspector();return;}if(box.every((value,i)=>value===boxes[selected].bbox[i]))return;remember();boxes[selected].bbox=box;changed();}
 $('applyCoordinates').onclick=applyCoordinates;for(const id of ['coordX','coordY','coordW','coordH'])$(id).onchange=applyCoordinates;
-$('previewBlur').onclick=async()=>{if(!editable()||!blurs.length)return;const version=++previewSerial;try{$('previewBlur').disabled=true;const r=await fetch('/api/blur-preview',{method:'POST',headers:{'X-Review-Token':token,'Content-Type':'application/json'},body:JSON.stringify({id:current.id,blur:blurs})});if(!r.ok)throw Error((await r.json()).error);const url=URL.createObjectURL(await r.blob());const image=new Image();image.src=url;await image.decode();if(version!==previewSerial){URL.revokeObjectURL(url);return;}if(previewURL)URL.revokeObjectURL(previewURL);previewURL=url;picture=image;draw();toast('Privacy preview ready. Save to apply it.');}catch(e){toast(e.message,true);}finally{$('previewBlur').disabled=!blurs.length;}};
+let privacyPreviewTimer;
+let privacyPreviewRequest;
+
+function queuePrivacyPreview(regions, delay = 0, manual = false) {
+  clearTimeout(privacyPreviewTimer);
+  privacyPreviewRequest?.abort();
+  const version = ++previewSerial;
+  if (!editable() || !regions.length) return;
+  const body = JSON.stringify({id: current.id, blur: regions});
+  const request = new AbortController();
+  privacyPreviewRequest = request;
+  privacyPreviewTimer = setTimeout(async () => {
+    let url;
+    try {
+      if (version !== previewSerial) return;
+      const response = await fetch('/api/blur-preview', {
+        method: 'POST', signal: request.signal,
+        headers: {'X-Review-Token': token, 'Content-Type': 'application/json'}, body,
+      });
+      if (!response.ok) throw Error((await response.json()).error);
+      url = URL.createObjectURL(await response.blob());
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      if (version !== previewSerial) return;
+      if (previewURL) URL.revokeObjectURL(previewURL);
+      previewURL = url;
+      url = null;
+      picture = image;
+      draw();
+      if (manual) toast('Privacy preview ready. Save to apply it.');
+    } catch (error) {
+      if (version === previewSerial && error.name !== 'AbortError') toast(error.message, true);
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      if (privacyPreviewRequest === request) privacyPreviewRequest = null;
+    }
+  }, delay);
+}
+$('previewBlur').onclick = () => queuePrivacyPreview(blurs, 0, true);
 function updatePrivacyStrength() {
   $('strengthLabel').textContent = $('privacyEffect').value === 'pixelate' ? 'Pixel block size' : 'Gaussian strength';
   $('radiusValue').textContent = $('blurRadius').value + ' px';
@@ -329,7 +406,13 @@ $('privacyEffect').onchange = () => {
   region.method = method;
   changed();
 };
-$('blurRadius').oninput = updatePrivacyStrength;
+$('blurRadius').oninput = () => {
+  updatePrivacyStrength();
+  if (!blurs[selectedBlur]) return;
+  const radius = Number($('blurRadius').value);
+  queuePrivacyPreview(blurs.map((region, index) =>
+    index === selectedBlur ? {...region, radius} : region), 140);
+};
 $('blurRadius').onchange=()=>{
   const region=blurs[selectedBlur];
   const radius=Number($('blurRadius').value);
@@ -697,12 +780,12 @@ function addPredictions(items) {
   canvas.focus({preventScroll:true});
 }
 
-function drawPredictions() {
+function drawPredictions(shown) {
   ctx.save();
   ctx.strokeStyle = '#55d6ff';
   ctx.lineWidth = 2 / scale;
   ctx.setLineDash([6/scale, 4/scale]);
-  for (const prediction of pendingPredictions()) ctx.strokeRect(...prediction.bbox);
+  for (const prediction of pendingPredictions()) if (shown.has(prediction)) ctx.strokeRect(...prediction.bbox);
   ctx.restore();
 }
 
@@ -762,9 +845,36 @@ function modelVoteCount(sources) {
   return count;
 }
 
-function layoutPredictionLabels(viewport) {
+function drawLabelConnectors(connectors) {
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = .7;
+  for (const {label, box, color} of connectors) {
+    const corners = ([x, y, w, h]) => [[x,y], [x+w,y], [x,y+h], [x+w,y+h]];
+    let nearest = Infinity, from, to;
+    for (const a of corners(label)) {
+      for (const b of corners(box)) {
+        const distance = (a[0]-b[0])**2 + (a[1]-b[1])**2;
+        if (distance >= nearest) continue;
+        nearest = distance;
+        from = a;
+        to = b;
+      }
+    }
+    if (nearest <= 16) continue;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(...from);
+    ctx.lineTo(...to);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function layoutPredictionLabels(viewport, overlays) {
+  const connectors = [];
   const pending = current && picture
-    ? [...(visible ? pendingPredictions() : []), ...pendingPrivacySuggestions()] : [];
+    ? [...overlays].filter(item => item.kind || predictions.includes(item)) : [];
   const shown = new Set(pending.map(prediction => prediction.id));
   for (const [id, label] of predictionLabels) {
     if (!shown.has(id)) {
@@ -773,7 +883,9 @@ function layoutPredictionLabels(viewport) {
       predictionLabels.delete(id);
     }
   }
-  const placed = [];
+  const placed = [...overlays].map(({bbox: [x, y, w, h]}) => ({
+    x: ox+x*scale, y: oy+y*scale, width: w*scale, height: h*scale,
+  }));
   const margin = 4;
   const clamp = (value, max) => Math.max(margin, Math.min(value, max));
   for (const prediction of pending) {
@@ -823,7 +935,10 @@ function layoutPredictionLabels(viewport) {
     label.style.left = px + 'px';
     label.style.top = py + 'px';
     placed.push({x:px, y:py, width, height});
+    connectors.push({label: [px, py, width, height], box: [left, top, w*scale, h*scale],
+      color: prediction.kind ? '#f5a4ef' : '#55d6ff'});
   }
+  return connectors;
 }
 
 $('acceptPredictionsAll').onclick = acceptAllPredictions;
@@ -863,8 +978,7 @@ async function maybePreannotate() {
   }
   if (!editable()) return;
   const image = current;
-  const weights = $('preannotationWeights').value.trim();
-  const confidence = Number($('preannotationConfidence').value) / 100;
+  const {weights, confidence} = roadPredictionOptions();
   const key = JSON.stringify([loadSerial, weights, confidence]);
   if (predictionRequest?.key === key) {
     status.textContent = predictionRequest.message;
@@ -882,6 +996,7 @@ async function maybePreannotate() {
       id: image.id, revision: image.revision, folder: data.folder, ...request.options,
     });
     if (predictionRequest !== request) return;
+    prefetchedPredictions.set(suggestionCacheKey(data.folder, data.mode, request, image), result);
     predictions = result.predictions.map(item => ({...item, id: 'new-' + crypto.randomUUID()}));
     request.pending = false;
     request.message = `${result.cached ? 'Saved · ' : ''}${predictions.length} model detections · ${result.device} · ${result.seconds} s`;
@@ -933,12 +1048,13 @@ function acceptPrivacy(suggestions) {
   canvas.focus({preventScroll:true});
 }
 
-function drawPrivacySuggestions() {
+function drawPrivacySuggestions(shown) {
   ctx.save();
   ctx.strokeStyle = '#f5a4ef';
   ctx.lineWidth = 2 / scale;
   ctx.setLineDash([3/scale, 5/scale]);
   for (const region of pendingPrivacySuggestions()) {
+    if (!shown.has(region)) continue;
     ctx.strokeStyle = region.weak ? '#fce0f8' : '#f5a4ef';
     ctx.strokeRect(...region.bbox);
   }
@@ -975,20 +1091,14 @@ async function maybeSuggestPrivacy() {
     return;
   }
   if (!editable()) return;
-  const thresholds = {
-    'Dashcam YOLOv8': Number($('dashcamConfidence').value) / 100,
-    'YuNet': Number($('faceConfidence').value) / 100,
-    'YOLOv9 plate': Number($('plateConfidence').value) / 100,
-    'OpenCV SSD face': Number($('ssdFaceConfidence').value) / 100,
-    'YOLOv9-s plate': Number($('plateSConfidence').value) / 100,
-  };
-  const key = JSON.stringify([loadSerial, thresholds]);
+  const options = privacyPredictionOptions();
+  const key = JSON.stringify([loadSerial, options]);
   if (privacyRequest?.key === key) {
     status.textContent = privacyRequest.message;
     return;
   }
   const image = current;
-  const request = {key, pending: true, options: {thresholds},
+  const request = {key, pending: true, options,
     endpoint: '/api/privacy-suggestions', message: 'Running the privacy detectors…'};
   privacyRequest = request;
   status.textContent = request.message;
@@ -1000,9 +1110,10 @@ async function maybeSuggestPrivacy() {
       id: image.id, revision: image.revision, folder: data.folder, ...request.options,
     });
     if (privacyRequest !== request) return;
+    prefetchedPredictions.set(suggestionCacheKey(data.folder, data.mode, request, image), result);
     privacySuggestions = result.regions.map(region => ({
       ...region, id: 'privacy-' + crypto.randomUUID(),
-      name: region.kind === 'face' ? 'face' : 'license plate',
+      name: region.kind === 'face' ? 'face' : region.printed_registration ? 'printed registration' : 'license plate',
     }));
     request.pending = false;
     request.failed = result.detectors.length === 0;
@@ -1034,19 +1145,53 @@ function suggestionCacheKey(folder, mode, request, image) {
   return JSON.stringify([namespace, image.relative]);
 }
 
-function renderSuggestionCounts(target, image) {
-  target.replaceChildren();
+function roadPredictionOptions() {
+  return {weights: $('preannotationWeights').value.trim(),
+    confidence: Number($('preannotationConfidence').value) / 100};
+}
+
+function privacyPredictionOptions() {
+  const thresholds = {
+    'Dashcam YOLOv8': Number($('dashcamConfidence').value) / 100,
+    'YuNet': Number($('faceConfidence').value) / 100,
+    'YOLOv9 plate': Number($('plateConfidence').value) / 100,
+    'OpenCV SSD face': Number($('ssdFaceConfidence').value) / 100,
+    'YOLOv9-s plate': Number($('plateSConfidence').value) / 100,
+  };
+  const options = {thresholds};
+  if ($('refinePlateEdges').checked) options.refine_plate_edges = true;
+  if ($('detectPrintedPlates').checked && privacyTypes().has('plate')) options.detect_printed_plates = true;
+  return options;
+}
+
+function cacheSuggestionRequests() {
+  return [
+    {endpoint: '/api/preannotate', options: roadPredictionOptions()},
+    {endpoint: '/api/privacy-suggestions', options: privacyPredictionOptions()},
+  ];
+}
+
+function imageSuggestionCounts(image, requests = cacheSuggestionRequests()) {
   const selectedImage = image.id === current?.id;
   const classes = enabledPredictionClasses();
   const types = privacyTypes();
-  const cached = request => request && !request.pending &&
+  const cached = request =>
     prefetchedPredictions.get(suggestionCacheKey(data.folder, data.mode, request, image));
-  const road = $('autoPreannotation').checked && classes.size && (selectedImage
+  const road = selectedImage && $('autoPreannotation').checked && predictionRequest && !predictionRequest.pending
     ? pendingPredictions().length
-    : cached(predictionRequest)?.predictions?.filter(item => classes.has(predictionClass(item.name))).length);
-  const privacy = $('autoPrivacy').checked && types.size && (selectedImage
+    : cached(requests[0])?.predictions?.filter(item => classes.has(predictionClass(item.name))
+      && (!selectedImage || !$('suppressOverlappingPredictions').checked
+        || !boxes.some(box => coversAnnotation(item.bbox, box.bbox)))).length;
+  const privacy = selectedImage && $('autoPrivacy').checked && privacyRequest && !privacyRequest.pending
     ? pendingPrivacySuggestions().length
-    : cached(privacyRequest)?.regions?.filter(region => visiblePrivacyCandidate(region, types)).length);
+    : cached(requests[1])?.regions?.filter(region => visiblePrivacyCandidate(region, types)
+      && (!selectedImage || !blurs.some(blur => coversAnnotation(blur.bbox, region.bbox)))).length;
+  return {road, privacy};
+}
+
+function renderSuggestionCounts(target, image) {
+  target.replaceChildren();
+  const {road, privacy} = imageSuggestionCounts(image);
   for (const [count, kind, label] of [
     [privacy, 'privacy', 'privacy box'], [road, 'annotation', 'new annotation'],
   ]) {
@@ -1054,14 +1199,52 @@ function renderSuggestionCounts(target, image) {
     const badge = document.createElement('span');
     badge.className = 'suggestionCount ' + kind;
     badge.textContent = `${count} ${label}${count === 1 ? '' : kind === 'privacy' ? 'es' : 's'} suggested`;
-    if (!selectedImage && kind === 'annotation') {
+    if (image.id !== current?.id && kind === 'annotation') {
       badge.title = 'Candidate count before checking overlap with existing annotations.';
     }
     target.append(badge);
   }
 }
 
+function updateSuggestionNavigation() {
+  const roadEnabled = $('autoPreannotation').checked && enabledPredictionClasses().size > 0;
+  const privacyEnabled = $('autoPrivacy').checked && privacyTypes().size > 0;
+  const stats = {
+    road: {boxes: 0, images: 0, previous: null, next: null},
+    privacy: {boxes: 0, images: 0, previous: null, next: null},
+  };
+  const position = filtered.findIndex(image => image.id === current?.id);
+  const requests = cacheSuggestionRequests();
+  filtered.forEach((image, index) => {
+    const counts = imageSuggestionCounts(image, requests);
+    for (const kind of ['road', 'privacy']) {
+      if (!counts[kind]) continue;
+      const total = stats[kind];
+      total.boxes += counts[kind];
+      total.images++;
+      if (index < position) total.previous = image.id;
+      if (index > position && total.next === null) total.next = image.id;
+    }
+  });
+  $('roadSuggestionNavigation').hidden = !roadEnabled && !stats.road.boxes;
+  $('privacySuggestionNavigation').hidden = !privacyEnabled && !stats.privacy.boxes;
+  $('roadSuggestionNavigation').parentElement.hidden =
+    $('roadSuggestionNavigation').hidden && $('privacySuggestionNavigation').hidden;
+  for (const [kind, label] of [['road', 'Road'], ['privacy', 'Privacy']]) {
+    const total = stats[kind];
+    for (const direction of ['previous', 'next']) {
+      const button = $(direction + label + 'Suggestion');
+      const id = total[direction];
+      button.disabled = id === null;
+      button.onclick = () => { if (id !== null) load(id); };
+    }
+    $(kind + 'SuggestionStats').textContent =
+      `${total.boxes.toLocaleString()} suggestions in ${total.images.toLocaleString()} images`;
+  }
+}
+
 function updateSuggestionRows() {
+  updateSuggestionNavigation();
   const rows = $('imageList').querySelectorAll('.imageItem');
   filtered.slice(page*LIBRARY_PAGE_SIZE, page*LIBRARY_PAGE_SIZE+LIBRARY_PAGE_SIZE).forEach((image, index) => {
     const row = rows[index];
@@ -1077,8 +1260,8 @@ async function restorePredictionProgress(dataset, request, images, namespace) {
   restoringPredictions = true;
   try {
     for (let start = 0; start < images.length; start += 200) {
-      if (dataset !== data || !$('backgroundPredictions').checked ||
-          ![predictionRequest, privacyRequest].some(active => active &&
+      if (dataset !== data ||
+          !cacheSuggestionRequests().some(active =>
             suggestionCacheKey(dataset.folder, dataset.mode, active, {relative: ''}) === namespace)) return;
       const batch = images.slice(start, start + 200);
       const hits = await api(request.endpoint, {
@@ -1109,8 +1292,10 @@ async function prefetchPredictions() {
   const status = $('prefetchStatus');
   const roadEnabled = $('autoPreannotation').checked && enabledPredictionClasses().size;
   const privacyEnabled = $('autoPrivacy').checked && privacyTypes().size;
-  status.hidden = !$('backgroundPredictions').checked || !current || !data?.prediction_cache || !(roadEnabled || privacyEnabled);
-  if (status.hidden) return;
+  const backgroundEnabled = $('backgroundPredictions').checked;
+  const canRestore = current && data?.prediction_cache;
+  status.hidden = !backgroundEnabled || !canRestore || !(roadEnabled || privacyEnabled);
+  if (!canRestore) return;
   const requests = [roadEnabled ? predictionRequest : null,
     privacyEnabled ? privacyRequest : null].filter(Boolean);
   const available = requests.filter(request => !request.failed && !request.pending);
@@ -1118,7 +1303,7 @@ async function prefetchPredictions() {
   const folder = data.folder;
 
   if (!busy && !requests.some(request => request.pending)) {
-    for (const request of available) {
+    for (const request of cacheSuggestionRequests()) {
       const namespace = suggestionCacheKey(folder, data.mode, request, {relative: ''});
       if (restoredPredictionNamespaces.has(namespace)) continue;
       status.textContent = 'Restoring saved prediction progress…';
@@ -1128,6 +1313,8 @@ async function prefetchPredictions() {
       return;
     }
   }
+
+  if (!backgroundEnabled) return;
 
   let remaining = 0;
   let issueCount = 0;
@@ -1204,7 +1391,7 @@ setInterval(prefetchPredictions, 650);
 
 const preferenceFields = ['backgroundPredictions', 'autoPreannotation', 'autoPrivacy', 'suppressOverlappingPredictions',
   'preannotationWeights', 'preannotationConfidence', 'dashcamConfidence', 'faceConfidence',
-  'plateConfidence', 'ssdFaceConfidence', 'plateSConfidence', 'hidePixelatedPlates', 'hideUnreadablePlates', 'hideUnverifiedFaces', 'privacyEffect', 'blurRadius', 'formatMode'];
+  'plateConfidence', 'ssdFaceConfidence', 'plateSConfidence', 'hidePixelatedPlates', 'hideUnreadablePlates', 'hideUnverifiedFaces', 'refinePlateEdges', 'detectPrintedPlates', 'privacyEffect', 'blurRadius', 'formatMode'];
 const preferenceGroups = ['predictionFilters', 'privacyTypes'];
 const viewFields = ['search', 'statusFilter', 'classFilter', 'drawClass'];
 let preferences = {};

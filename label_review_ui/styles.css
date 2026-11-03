@@ -58,3 +58,7 @@
 .suggestionCount.annotation{color:#17548a;background:#e0eefc}
 
 .detectorSettings>summary{cursor:pointer;font-weight:600;padding:4px 0}
+
+#pageJump{display:flex;align-items:center;gap:4px;white-space:nowrap}
+#pageNumber{width:48px;padding:2px 4px}
+.pageRange{display:block;text-align:center;padding:0 4px 4px;color:var(--muted)}

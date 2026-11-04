@@ -996,7 +996,7 @@ async function maybePreannotate() {
       id: image.id, revision: image.revision, folder: data.folder, ...request.options,
     });
     if (predictionRequest !== request) return;
-    prefetchedPredictions.set(suggestionCacheKey(data.folder, data.mode, request, image), result);
+    rememberPredictionSummary(suggestionCacheKey(data.folder, data.mode, request, image), result);
     predictions = result.predictions.map(item => ({...item, id: 'new-' + crypto.randomUUID()}));
     request.pending = false;
     request.message = `${result.cached ? 'Saved · ' : ''}${predictions.length} model detections · ${result.device} · ${result.seconds} s`;
@@ -1110,7 +1110,7 @@ async function maybeSuggestPrivacy() {
       id: image.id, revision: image.revision, folder: data.folder, ...request.options,
     });
     if (privacyRequest !== request) return;
-    prefetchedPredictions.set(suggestionCacheKey(data.folder, data.mode, request, image), result);
+    rememberPredictionSummary(suggestionCacheKey(data.folder, data.mode, request, image), result);
     privacySuggestions = result.regions.map(region => ({
       ...region, id: 'privacy-' + crypto.randomUUID(),
       name: region.kind === 'face' ? 'face' : region.printed_registration ? 'printed registration' : 'license plate',
@@ -1139,6 +1139,17 @@ $('acceptPrivacyAll').onclick = () => acceptPrivacy(pendingPrivacySuggestions())
 
 const prefetchedPredictions = new Map();
 const prefetchIssues = new Map();
+
+function rememberPredictionSummary(key, result) {
+  const summary = result.predictions ? {
+    predictions: result.predictions.map(({name, bbox}) => ({name, bbox})),
+  } : {
+    regions: result.regions.map(({kind, bbox, already_pixelated, face_features,
+      human_context, plate_text_readable}) =>
+      ({kind, bbox, already_pixelated, face_features, human_context, plate_text_readable})),
+  };
+  prefetchedPredictions.set(key, summary);
+}
 
 function suggestionCacheKey(folder, mode, request, image) {
   const namespace = JSON.stringify([folder, mode, request.endpoint, request.options]);
@@ -1171,10 +1182,9 @@ function cacheSuggestionRequests() {
   ];
 }
 
-function imageSuggestionCounts(image, requests = cacheSuggestionRequests()) {
+function imageSuggestionCounts(image, requests = cacheSuggestionRequests(),
+    classes = enabledPredictionClasses(), types = privacyTypes()) {
   const selectedImage = image.id === current?.id;
-  const classes = enabledPredictionClasses();
-  const types = privacyTypes();
   const cached = request =>
     prefetchedPredictions.get(suggestionCacheKey(data.folder, data.mode, request, image));
   const road = selectedImage && $('autoPreannotation').checked && predictionRequest && !predictionRequest.pending
@@ -1215,8 +1225,10 @@ function updateSuggestionNavigation() {
   };
   const position = filtered.findIndex(image => image.id === current?.id);
   const requests = cacheSuggestionRequests();
+  const classes = enabledPredictionClasses();
+  const types = privacyTypes();
   filtered.forEach((image, index) => {
-    const counts = imageSuggestionCounts(image, requests);
+    const counts = imageSuggestionCounts(image, requests, classes, types);
     for (const kind of ['road', 'privacy']) {
       if (!counts[kind]) continue;
       const total = stats[kind];
@@ -1269,7 +1281,7 @@ async function restorePredictionProgress(dataset, request, images, namespace) {
       });
       for (const image of batch) {
         if (Object.hasOwn(hits, image.id)) {
-          prefetchedPredictions.set(suggestionCacheKey(dataset.folder, dataset.mode, request, image), hits[image.id]);
+          rememberPredictionSummary(suggestionCacheKey(dataset.folder, dataset.mode, request, image), hits[image.id]);
         }
       }
       if (dataset === data) updateSuggestionRows();
@@ -1376,7 +1388,7 @@ async function prefetchPredictions() {
     } else {
       prefetchWait = '';
       if (result.warnings?.length) prefetchIssues.set(key, result.warnings.join(' · '));
-      prefetchedPredictions.set(key, result);
+      rememberPredictionSummary(key, result);
       updateSuggestionRows();
     }
   } catch (error) {

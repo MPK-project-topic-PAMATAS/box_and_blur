@@ -21,6 +21,18 @@ def configure_local_ultralytics():
     os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
 
 
+def predict_transient(model, *args, **kwargs):
+    """Keep the loaded predictor, but release Ultralytics' last input and results."""
+    try:
+        return model.predict(*args, **kwargs)
+    finally:
+        predictor = model.predictor
+        if predictor is not None:
+            predictor.batch = None
+            predictor.results = None
+            predictor.dataset = None
+
+
 def class_key(name):
     name = re.sub(r'^\d+[\s:._-]+', '', str(name).casefold())
     key = re.sub(r'[^a-z0-9]', '', name)
@@ -66,7 +78,7 @@ class Preannotator:
                 raise ValueError('Normalize this image’s EXIF orientation before preannotation.')
             image = source.convert('RGB')
         try:
-            result = self.model.predict(image, imgsz=640, conf=confidence, device=device,
+            result = predict_transient(self.model, image, imgsz=640, conf=confidence, device=device,
                                         half=False, max_det=100, verbose=False)[0]
         except RuntimeError as error:
             raise ValueError(f'Model inference failed on {device}: {error}') from error

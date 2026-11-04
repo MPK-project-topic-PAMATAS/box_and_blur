@@ -6,7 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 from PIL import Image
-from label_review_preannotation import configure_local_ultralytics
+from label_review_preannotation import configure_local_ultralytics, predict_transient
 
 
 MODELS = Path(os.environ.get(
@@ -251,7 +251,7 @@ class PrivacyDetector:
             if not weights.is_file():
                 raise FileNotFoundError('Fork checkpoint dashcam.pt is missing.')
             self.dashcam = YOLO(str(weights), task='detect')
-        result = self.dashcam.predict(image, imgsz=960, conf=threshold,
+        result = predict_transient(self.dashcam, image, imgsz=960, conf=threshold,
                                       device=0 if torch.cuda.is_available() else 'cpu',
                                       max_det=100, verbose=False)[0]
         for x1, y1, x2, y2, score, class_id in result.boxes.data.cpu().tolist():
@@ -357,7 +357,7 @@ class PrivacyDetector:
             if not path.is_file():
                 raise FileNotFoundError(f'{filename} is missing.')
             self.context_models[filename] = YOLO(str(path), task='detect')
-        result = self.context_models[filename].predict(
+        result = predict_transient(self.context_models[filename],
             image, imgsz=960, conf=.20, classes=classes,
             device=0 if torch.cuda.is_available() else 'cpu', max_det=100, verbose=False)[0]
         return [(int(class_id), (x1, y1, x2, y2))
